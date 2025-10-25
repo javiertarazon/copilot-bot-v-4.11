@@ -1,0 +1,141 @@
+# 🧪 CONFIGURACIÓN DE PRUEBAS - LIVE TRADING TEST
+# Parámetros RELAJADOS para ejecutar más operaciones y validar cálculos
+# NO MODIFICAR config.yaml productivo - Este archivo es solo para PRUEBAS
+
+active_exchange: binance
+
+backtesting:
+  commission: 0.1
+  data_quality: null
+  end_date: '2025-10-24'
+  initial_capital: 100  # Capital menor para pruebas (100 USDT)
+  
+  optimized_parameters:
+    BTC_USDT:
+      # ⬇️ PARÁMETROS RELAJADOS - MÁS OPERACIONES
+      atr_period: 14                    # Reducido de 17
+      cci_threshold: 85                 # Reducido de 90 (menos restrictivo)
+      ema_trend_period: 30              # Reducido de 50 (más sensible)
+      kelly_fraction: 0.15              # Aumentado de 0.1
+      liquidity_score_min: 3            # Reducido de 5 (menos restrictivo)
+      max_concurrent_trades: 2          # ↑ IMPORTANTE: De 1 a 2 (más operaciones)
+      max_drawdown: 0.05                # Aumentado de 0.03 (más tolerancia)
+      max_portfolio_heat: 0.08          # Aumentado de 0.05 (más riesgo permitido)
+      min_rr_ratio: 2.0                 # Reducido de 2.5 (menos restrictivo)
+      ml_threshold: 0.15                # Reducido de 0.2 (más sensible a ML)
+      ml_threshold_max: 0.75            # Reducido de 0.8
+      ml_threshold_min: 0.1             # Reducido de 0.2
+      risk_per_trade: 0.03              # Aumentado de 0.02 (más riesgo por trade)
+      sar_acceleration: 0.06            # Aumentado de 0.04
+      sar_maximum: 0.3                  # Aumentado de 0.26
+      stoch_overbought: 75              # Aumentado de 70 (menos restrictivo)
+      stoch_oversold: 30                # Reducido de 35 (más oportunidades)
+      stop_loss_atr_multiplier: 2.0     # Reducido de 2.25 (stops más cercanos)
+      take_profit_atr_multiplier: 3.0   # Reducido de 3.75 (TPs más cercanos)
+      volume_ratio_min: 0.2             # Reducido de 0.3 (menos restrictivo)
+  
+  slippage: 0.05
+  start_date: '2024-06-01'
+  
+  strategies:
+    HeikinNeuronalMLPruebas: false
+    UltraDetailedHeikinAshiML: true
+  
+  strategy_paths:
+    HeikinNeuronalMLPruebas:
+    - strategies.heikin_neuronal_ml_pruebas
+    - HeikinNeuronalMLPruebasStrategy
+    UltraDetailedHeikinAshiML:
+    - strategies.ultra_detailed_heikin_ashi_ml_strategy
+    - UltraDetailedHeikinAshiMLStrategy
+  
+  symbol_selection:
+    BTC/USDT: true
+  
+  symbols:
+  - BTC/USDT
+  
+  timeframe: 15m
+
+compensation_strategy:
+  compensation_max_loss: 1.0
+  emergency_stop_buffer: 0.8
+  enabled: true
+  loss_threshold: 0.5
+  max_account_drawdown: 3.0
+  risk_multiplier_high_dd: 0.7
+  size_multiplier: 3.0
+  tp_percent: 0.5
+
+data:
+  limit_per_request: 2000
+  max_retries: 3
+  retry_delay: 5
+  use_ccxt_for_crypto: true
+  use_mt5_for_stocks: false
+  validate_data: true
+
+exchanges:
+  binance:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: true          # ⚠️ IMPORTANTE: SIEMPRE EN SANDBOX PARA PRUEBAS
+    timeout: 30000
+  bybit:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: true          # ⚠️ IMPORTANTE: SIEMPRE EN SANDBOX PARA PRUEBAS
+    timeout: 30000
+
+indicators:
+  adx:
+    enabled: true
+    period: 14
+    threshold: 20          # Reducido de 25 (menos restrictivo)
+  atr:
+    enabled: true
+    period: 14
+  ema:
+    enabled: true
+    periods:
+    - 10
+    - 20
+    - 200
+  heikin_ashi:
+    enabled: true
+    size_comparison_threshold: 1.0     # Reducido de 1.2 (más sensible)
+    trend_period: 3
+  parabolic_sar:
+    acceleration: 0.03                 # Aumentado de 0.02
+    enabled: true
+    maximum: 0.25                      # Aumentado de 0.2
+  volatility:
+    enabled: true
+    method: standard_deviation
+    period: 14
+
+# 🧪 CONFIGURACIÓN ESPECÍFICA PARA PRUEBAS
+live_trading_test:
+  enabled: true
+  log_all_signals: true                # Registra todos los signals
+  max_trades_per_session: 10           # Límite de trades por sesión de pruebas
+  test_duration_minutes: 60            # Duración de prueba (1 hora)
+  detailed_logging: true               # Logs detallados de cada operación
+  validate_calculations: true          # Valida cálculos en cada trade
+  print_trade_details: true            # Imprime detalles en consola
+
+# 📊 RESUMEN DE CAMBIOS VS PRODUCTIVO
+# ================================
+# PARÁMETRO                    | PRODUCTIVO | PRUEBAS | RAZÓN
+# --------------------------------
+# max_concurrent_trades        | 1         | 2       | ↑ Más operaciones
+# risk_per_trade               | 0.02      | 0.03    | ↑ Más riesgo permitido
+# cci_threshold                | 90        | 85      | ↓ Menos restrictivo
+# ml_threshold                 | 0.2       | 0.15    | ↓ Más sensible
+# initial_capital              | 800       | 100     | ↓ Menos capital
+# max_portfolio_heat           | 0.05      | 0.08    | ↑ Más calor de cartera
+# liquidity_score_min          | 5         | 3       | ↓ Menos restrictivo
+# stoch_oversold               | 35        | 30      | ↓ Más oportunidades
+# volume_ratio_min             | 0.3       | 0.2     | ↓ Menos restrictivo
