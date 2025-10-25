@@ -155,6 +155,88 @@ def main():
         )
         
         st.plotly_chart(fig_equity, use_container_width=True)
+        
+        # ====================================================================
+        # GRÁFICO DE DRAWDOWN
+        # ====================================================================
+        
+        st.markdown("---")
+        st.subheader("📉 Curva de Drawdown (Pérdida de Capital)")
+        
+        # Calcular drawdown a partir de la equity curve
+        equity_array = np.array(equity)
+        running_max = np.maximum.accumulate(equity_array)
+        drawdown = (equity_array - running_max) / running_max * 100
+        
+        # Gráfico de Drawdown
+        fig_drawdown = go.Figure()
+        
+        # Línea de drawdown
+        fig_drawdown.add_trace(go.Scatter(
+            y=drawdown,
+            mode='lines',
+            name='Drawdown %',
+            line=dict(color='#D62828', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(214, 40, 40, 0.3)'
+        ))
+        
+        # Línea de max drawdown
+        max_dd = abs(np.min(drawdown))
+        fig_drawdown.add_hline(
+            y=-max_dd,
+            line_dash="dash",
+            line_color="orange",
+            annotation_text=f"Max DD: {max_dd:.2f}%",
+            annotation_position="top right"
+        )
+        
+        fig_drawdown.update_layout(
+            title="Curva de Drawdown - Pérdida Máxima desde el Pico",
+            xaxis_title="Trade #",
+            yaxis_title="Drawdown (%)",
+            hovermode='x unified',
+            height=400,
+            template='plotly_dark',
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_drawdown, use_container_width=True)
+        
+        # Estadísticas de drawdown
+        col_dd1, col_dd2, col_dd3, col_dd4 = st.columns(4)
+        
+        with col_dd1:
+            st.metric(
+                "📉 Max Drawdown",
+                f"{max_dd:.2f}%",
+                help="Pérdida máxima desde el pico más alto"
+            )
+        
+        with col_dd2:
+            avg_dd = abs(np.mean(drawdown[drawdown < 0])) if len(drawdown[drawdown < 0]) > 0 else 0
+            st.metric(
+                "⏱️ DD Promedio",
+                f"{avg_dd:.2f}%",
+                help="Promedio de drawdown cuando existe"
+            )
+        
+        with col_dd3:
+            num_drawdown_trades = np.sum(drawdown < 0)
+            pct_dd = (num_drawdown_trades / len(drawdown)) * 100
+            st.metric(
+                "📊 % Trades DD",
+                f"{pct_dd:.1f}%",
+                help=f"{num_drawdown_trades} de {len(drawdown)} trades"
+            )
+        
+        with col_dd4:
+            calmar = metrics.get('calmar_ratio', 0)
+            st.metric(
+                "📈 Calmar Ratio",
+                f"{calmar:.2f}",
+                help="ROI / Max Drawdown"
+            )
     
     # ========================================================================
     # SECCIÓN 2: DISTRIBUCIÓN DE TRADES
