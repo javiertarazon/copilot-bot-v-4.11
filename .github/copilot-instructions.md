@@ -39,6 +39,104 @@ This is a modular trading system with centralized entry via `descarga_datos/main
 - **Code Modifications**: The strategy (`strategies/ultra_detailed_heikin_ashi_ml_strategy.py`) and main modules (`descarga_datos/main.py`, core modules) are blocked from structural modifications. Only parameter improvements are allowed that enhance functionality and profitability without altering the core structure.
 - **Documentation Creation Policy**: 🚨 **CRITICAL** - Do NOT create documentation files (*.md, *.txt, guides, reference documents, analysis reports, etc.) unless explicitly requested by the user. Only create code files when necessary for functionality. Examples of documentation NOT to create without request: implementation guides, step-by-step tutorials, summary reports, quick reference guides, changelog entries, or analysis documentation. If user says "no solicites documentos" or similar, strictly respect this preference.
 
+## 📁 File Storage Policy - MANDATORY
+
+🚨 **STRICT ENFORCEMENT**: All files MUST be saved in their designated folders. NO EXCEPTIONS.
+
+### File Type → Storage Location
+
+| File Type | Storage Folder | Rules |
+|-----------|----------------|-------|
+| **Documentation** (*.md) | `descarga_datos/ARCHIVOS MD/` | ALL markdown files here |
+| **Tests** (test_*.py, check_*.py, validation_*.py, quick_*.py) | `descarga_datos/tests/` | ALL test/validation files here |
+| **Functional Scripts** (utilities, helpers, tools) | `descarga_datos/utils/` | ALL system scripts here |
+| **Data Files** (CSV, JSON, pickle, DB, results) | `descarga_datos/data/` | ALL generated data here |
+| **Logs** (*.log, error files) | `descarga_datos/logs/` | ALL log files here |
+| **Root Level** | Root only if `.py` (main entry points) or `.txt` (requirements.txt only) | NO other files at root |
+
+### Specific Rules
+
+**Documentation:**
+```
+✅ Markdown files (.md)     → descarga_datos/ARCHIVOS MD/
+✅ Text summaries (.txt)    → descarga_datos/ARCHIVOS MD/
+❌ NO .md or .txt at root
+❌ NO .md or .txt in other folders
+```
+
+**Testing & Validation:**
+```
+✅ test_*.py               → descarga_datos/tests/
+✅ check_*.py              → descarga_datos/tests/
+✅ validation_*.py         → descarga_datos/tests/
+✅ quick_*.py              → descarga_datos/tests/
+❌ NO test files in scripts/
+❌ NO test files in utils/
+```
+
+**Functional Code:**
+```
+✅ Helper functions        → descarga_datos/utils/
+✅ Utility modules         → descarga_datos/utils/
+✅ Common tools            → descarga_datos/utils/
+❌ NO scripts in root
+❌ NO scripts in other folders
+```
+
+**Generated Data:**
+```
+✅ CSV files               → descarga_datos/data/
+✅ JSON results            → descarga_datos/data/
+✅ Pickle files            → descarga_datos/data/
+✅ Database files          → descarga_datos/data/
+✅ Dashboard results       → descarga_datos/data/
+✅ Backtest results        → descarga_datos/data/
+❌ NO data at root
+❌ NO data in other folders
+```
+
+**Logs:**
+```
+✅ Application logs        → descarga_datos/logs/
+✅ Error logs              → descarga_datos/logs/
+✅ Trade logs              → descarga_datos/logs/
+❌ NO logs at root
+❌ NO logs in other folders
+```
+
+### Violation Consequences
+- **Missing Documentation**: STOP - Ask user for explicit request
+- **Wrong Folder**: Move file immediately to correct location
+- **Duplicates**: DELETE all duplicates, keep only in designated folder
+- **Root Pollution**: REMOVE immediately, relocate to correct folder
+
+### Path Examples
+
+```python
+# ✅ CORRECT
+doc_path = Path(__file__).parent.parent / "ARCHIVOS MD" / "my_doc.md"
+test_path = Path(__file__).parent.parent / "tests" / "test_my_feature.py"
+script_path = Path(__file__).parent.parent / "utils" / "helper.py"
+data_path = Path(__file__).parent.parent / "data" / "results.csv"
+log_path = Path(__file__).parent.parent / "logs" / "app.log"
+
+# ❌ WRONG - NEVER DO THIS
+root_md = Path(".") / "my_doc.md"
+data_at_root = Path(".") / "data.csv"
+test_in_utils = Path("utils") / "test_something.py"
+```
+
+### Verification Checklist Before Saving
+```
+[ ] Is this a .md file?           → ARCHIVOS MD/
+[ ] Is this a test_*.py file?     → tests/
+[ ] Is this a utility function?   → utils/
+[ ] Is this data/results?         → data/
+[ ] Is this a log file?           → logs/
+[ ] Am I creating at root?        → ONLY if requirements.txt or main entry
+[ ] Does file go elsewhere?       → ASK USER FIRST
+```
+
 ## Data Management Rules
 - **Centralized Configuration**: All configuration is centralized in `descarga_datos/config/config.yaml`. Use this for all parameters.
 - **Data Verification Flow**: When executing any main function requiring historical data (backtest, optimization, data download, data audit, model training), first verify if data exists in the SQLite database. If present, use those data. If not, proceed to download with corresponding modules, process, verify, calculate necessary indicators, and execute the corresponding main function.

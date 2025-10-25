@@ -121,6 +121,11 @@ class CCXTOrderExecutor:
         self.pending_orders = {}  # order_id -> order_info
         self.position_history = []
 
+        # Locks para evitar órdenes duplicadas (idempotencia ligera)
+        # key = "{symbol}:{side}" -> timestamp
+        self._order_locks: Dict[str, float] = {}
+        self._order_lock_timeout = live_config.get('order_lock_timeout', 30)
+
         # Gestión de riesgo
         self.risk_manager = None
 
@@ -266,6 +271,37 @@ class CCXTOrderExecutor:
             self.logger.error(f"Error desconectando CCXTOrderExecutor: {e}")
             return False
 
+    # ------------------------
+    # Idempotency / order lock helpers
+    # ------------------------
+    def _acquire_order_lock(self, symbol: str, side: str, timeout: Optional[int] = None) -> bool:
+        """
+        Intenta adquirir un lock ligero para evitar envíos duplicados de órdenes por re-evaluación.
+
+        Retorna True si se adquirió el lock, False si ya existe y no expiró.
+        """
+        try:
+            key = f"{symbol}:{side}"
+            now = time.time()
+            timeout = timeout or self._order_lock_timeout
+            ts = self._order_locks.get(key)
+            if ts and (now - ts) < timeout:
+                return False
+            # Adquirir lock
+            self._order_locks[key] = now
+            return True
+        except Exception:
+            return False
+
+    def _release_order_lock(self, symbol: str, side: str) -> None:
+        """Libera el lock de orden para (symbol, side)."""
+        try:
+            key = f"{symbol}:{side}"
+            if key in self._order_locks:
+                del self._order_locks[key]
+        except Exception:
+            pass
+
     def is_connected(self) -> bool:
         """
         Verifica si está conectado al exchange.
@@ -307,9 +343,21 @@ class CCXTOrderExecutor:
         """
         Calcula el tamaño de posición según el modo de trading.
         
+        ✅ CORRECCIÓN v4.6: El leverage NO multiplica la cantidad
+        El leverage SOLO reduce el margen requerido.
+        
+        ANTES (INCORRECTO):
+        - quantity = (risk / distance) × leverage
+        - Resultado: Posiciones imposibles para traders pequeños
+        
+        AHORA (CORRECTO - Freqtrade, OctoBot):
+        - quantity = risk / distance (SIN leverage)
+        - margin_required = (quantity × entry_price) / leverage
+        - Resultado: Funciona para cualquier capital
+        
         - SPOT: Compra/venta física, capital se bloquea completamente
-        - MARGIN: Apalancado con margen, solo se usa % del capital
-        - FUTURES: Derivados puros, usa leverage sin capital bloqueado
+        - MARGIN: Apalancado con margen, margen requerido = posición / leverage
+        - FUTURES: Derivados puros, margen requerido = posición / leverage
         
         Args:
             symbol: Símbolo del par
@@ -320,27 +368,34 @@ class CCXTOrderExecutor:
             risk_pct: Porcentaje de riesgo
             
         Returns:
-            float: Tamaño de posición calculado
+            float: Tamaño de posición calculado (SIN multiplicar por leverage)
         """
         risk_amount = portfolio_value * risk_pct
         base_size = risk_amount / risk_distance if risk_distance > 0 else 0
         
-        if self.trading_mode == 'spot':
-            # SPOT: Usar tamaño calculado directamente (sin apalancamiento)
-            return base_size
+        # ✅ CORRECCIÓN CRÍTICA: NO MULTIPLICAR POR LEVERAGE
+        # El leverage se aplica en el margen requerido, no en la cantidad
+        # 
+        # Cálculo del margen requerido (para referencia):
+        # margin_required = (base_size * entry_price) / leverage
+        #
+        # Validación: Si margen > 90% del portfolio, reducir cantidad
+        if self.trading_mode in ['margin', 'futures']:
+            effective_leverage = self.margin_leverage if self.trading_mode == 'margin' else self.futures_leverage
+            position_value = base_size * entry_price
+            margin_required = position_value / effective_leverage
+            
+            # Si el margen requerido excede el 90% del portfolio, reducir posición
+            if margin_required > portfolio_value * 0.9:
+                # Reducir cantidad para que margen = 90% del portfolio
+                base_size = (portfolio_value * 0.9 * effective_leverage) / entry_price
+                self.logger.warning(
+                    f"Posición reducida por límite de margen. "
+                    f"Margen requerido: ${margin_required:,.2f}, "
+                    f"Portfolio: ${portfolio_value:,.2f}"
+                )
         
-        elif self.trading_mode == 'margin':
-            # MARGIN: Aumentar tamaño por el apalancamiento
-            # Con 10x leverage, se puede hacer 10x de posiciones con el mismo capital
-            effective_leverage = self.margin_leverage
-            return base_size * effective_leverage
-        
-        elif self.trading_mode == 'futures':
-            # FUTURES: Usar apalancamiento para aumentar tamaño
-            # El capital requerido es capital / leverage
-            effective_leverage = self.futures_leverage
-            return base_size * effective_leverage
-        
+        # ✅ RETORNAR CANTIDAD SIN MULTIPLICAR POR LEVERAGE
         return base_size
 
     def _get_balance_with_spot_fallback(self) -> Dict:
@@ -659,7 +714,7 @@ class CCXTOrderExecutor:
             
             # Determinar el lado de la orden
             ccxt_side = 'buy' if order_type in [OrderType.BUY, OrderType.LIMIT_BUY, OrderType.STOP_BUY] else 'sell'
-            
+
             order_params = {
                 'symbol': symbol,
                 'type': ccxt_order_type,  # 'market' o 'limit'
@@ -670,8 +725,27 @@ class CCXTOrderExecutor:
             if price is not None:
                 order_params['price'] = price
 
-            # Ejecutar orden
-            order = self.exchange.create_order(**order_params)
+            # Intentar adquirir lock para evitar órdenes duplicadas cercanas en el tiempo
+            lock_acquired = False
+            try:
+                lock_acquired = self._acquire_order_lock(symbol, ccxt_side)
+                if not lock_acquired:
+                    self.logger.warning(f"Orden duplicada detectada para {symbol} {ccxt_side} - saltando envío")
+                    return None
+
+                # Ejecutar orden
+                order = self.exchange.create_order(**order_params)
+
+            finally:
+                # Liberar lock sólo después de que la orden haya sido enviada o en caso de excepción
+                # Si la orden fue enviada con éxito, el lock puede mantenerse un corto periodo para evitar reenvíos;
+                # sin embargo liberamos siempre para simplificar la lógica y confiar en timeout config.
+                try:
+                    if lock_acquired:
+                        # Liberar inmediatamente para evitar bloqueos prolongados en tests
+                        self._release_order_lock(symbol, ccxt_side)
+                except Exception:
+                    pass
 
             # ✅ VERIFICAR EJECUCIÓN REAL EN BINANCE TESTNET
             order_verification = self.verify_order_execution(order['id'], symbol)

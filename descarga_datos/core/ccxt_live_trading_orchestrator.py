@@ -73,7 +73,6 @@ class CCXTLiveTradingOrchestrator:
         # Configuración de live trading
         self.live_config = self.config.get('live_trading', {})
         self.backtesting_config = self.config.get('backtesting', {})
-
         # Inicializar componentes de trading
         self.data_provider = CCXTLiveDataProvider(
             config=self.config,  # ✅ PASAR CONFIG COMPLETO
@@ -102,6 +101,9 @@ class CCXTLiveTradingOrchestrator:
 
         # Cola para procesamiento seguro de señales
         self.signal_queue = queue.Queue()
+        # Tracking para evitar múltiples entradas en la misma vela por estrategia/símbolo
+        # Key: (strategy_name, symbol) -> timestamp of last processed signal/bar
+        self._last_signal_timestamp = {}
         
         # Variables para el monitoreo continuo de posiciones
         self.position_monitor_interval = 60  # Intervalo de monitoreo en segundos
@@ -118,6 +120,8 @@ class CCXTLiveTradingOrchestrator:
 
         # Mantener compatibilidad con código existente (deprecated)
         self.live_metrics = self.live_tracker.get_comprehensive_metrics()
+        # Flag configurable para evaluar señales solo en cierre de vela (paridad con backtest)
+        self.evaluate_on_bar_close = self.live_config.get('evaluate_on_bar_close', True)
 
         logger.info("CCXTLiveTradingOrchestrator inicializado correctamente")
 
@@ -506,6 +510,15 @@ class CCXTLiveTradingOrchestrator:
                     # Ejecutar estrategia usando LIVE SIGNAL METHOD
                     logger.debug(f"⚙️ Ejecutando strategy.get_live_signal() para {symbol}...")
                     result = strategy.get_live_signal(data_with_indicators, symbol)
+                    # Adjuntar timestamp de la última vela para que el handler pueda validar cierre de vela
+                    try:
+                        last_bar_ts = data_with_indicators.index[-1]
+                        if isinstance(result, dict):
+                            if 'signal_data' not in result or result['signal_data'] is None:
+                                result['signal_data'] = {}
+                            result['signal_data']['_last_bar_timestamp'] = last_bar_ts
+                    except Exception:
+                        pass
                     # Mejorar logging del resultado para depuración en vivo
                     if result:
                         sig = result.get('signal', 'NO_SIGNAL')
@@ -535,6 +548,63 @@ class CCXTLiveTradingOrchestrator:
             # Verificar si hay señal de entrada
             signal = result.get('signal', 'NO_SIGNAL')
             signal_data = result.get('signal_data', {})
+
+            # Evitar múltiples ejecuciones para la misma vela: comprobar timestamp de la señal
+            try:
+                sig_ts = signal_data.get('timestamp') if isinstance(signal_data, dict) else None
+                # Normalizar si es pandas Timestamp
+                if hasattr(sig_ts, 'to_pydatetime'):
+                    sig_ts = sig_ts.to_pydatetime()
+            except Exception:
+                sig_ts = None
+
+            key = (strategy_name, symbol)
+            if sig_ts is not None:
+                last_ts = self._last_signal_timestamp.get(key)
+                if last_ts is not None:
+                    # Si ya procesamos esta misma vela, ignorar para evitar entradas repetidas
+                    # Comparar por igualdad absoluta de timestamp (las velas vienen con timestamp exacto)
+                    if last_ts == sig_ts:
+                        logger.info(f"Skipping signal for {strategy_name} {symbol} at {sig_ts} - already processed this bar")
+                        try:
+                            # Persistir telemetría en el tracker
+                            self.live_tracker.signals_skipped_same_bar += 1
+                            self.live_tracker.signal_events.append({
+                                'timestamp': sig_ts.isoformat() if hasattr(sig_ts, 'isoformat') else str(sig_ts),
+                                'reason': 'duplicate_same_bar',
+                                'ml_confidence': result.get('ml_confidence') if isinstance(result, dict) else None,
+                                'strategy': strategy_name,
+                                'symbol': symbol
+                            })
+                        except Exception:
+                            pass
+                        return
+
+                # Si está configurado evaluar solo en cierre de vela, comprobar que la señal corresponde
+                if self.evaluate_on_bar_close:
+                    try:
+                        last_bar_ts = signal_data.get('_last_bar_timestamp')
+                        if hasattr(last_bar_ts, 'to_pydatetime'):
+                            last_bar_ts = last_bar_ts.to_pydatetime()
+                        # Si disponemos de ambos timestamps y no coinciden, ignorar
+                        if last_bar_ts is not None and sig_ts is not None and last_bar_ts != sig_ts:
+                            logger.info(f"Skipping signal for {strategy_name} {symbol} at {sig_ts} - not the last closed bar ({last_bar_ts})")
+                            try:
+                                self.live_tracker.signals_skipped_bar_close += 1
+                                self.live_tracker.signal_events.append({
+                                    'timestamp': sig_ts.isoformat() if hasattr(sig_ts, 'isoformat') else str(sig_ts),
+                                    'reason': 'not_last_closed_bar',
+                                    'ml_confidence': result.get('ml_confidence') if isinstance(result, dict) else None,
+                                    'strategy': strategy_name,
+                                    'symbol': symbol,
+                                    'last_bar_ts': last_bar_ts.isoformat() if hasattr(last_bar_ts, 'isoformat') else str(last_bar_ts)
+                                })
+                            except Exception:
+                                pass
+                            return
+                    except Exception:
+                        # En caso de error en la validación, no bloquear la señal
+                        pass
 
             if signal in ['BUY', 'SELL'] and signal_data.get('current_signal') == signal:
                 logger.info(f"Abrir nueva posición {signal} para {symbol} - Estrategia: {strategy_name}")
@@ -645,6 +715,12 @@ class CCXTLiveTradingOrchestrator:
                         self.active_positions[position['ticket']] = position
                         self.live_metrics['total_trades'] += 1
                         logger.info(f"Posición abierta con risk management: {position}")
+                        # Registrar timestamp de la señal procesada para evitar re-entradas en la misma vela
+                        try:
+                            if sig_ts is not None:
+                                self._last_signal_timestamp[(strategy_name, symbol)] = sig_ts
+                        except Exception:
+                            pass
 
         except Exception as e:
             logger.error(f"Error manejando señal de estrategia {strategy_name}: {e}")

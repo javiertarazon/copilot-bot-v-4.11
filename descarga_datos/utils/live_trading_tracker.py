@@ -72,10 +72,15 @@ class LiveTradingTracker:
         # Información temporal
         self.start_time = datetime.now()
         self.last_update = datetime.now()
-
         # Configuración
         self.risk_free_rate = 0.02  # 2% anual como tasa libre de riesgo
         self.save_interval = 30  # Guardar cada 30 segundos
+
+        # Señales y telemetría de señales rechazadas
+        # Guardamos eventos de señal para análisis posterior
+        self.signals_skipped_same_bar = 0
+        self.signals_skipped_bar_close = 0
+        self.signal_events: List[Dict[str, Any]] = []  # Cada evento: timestamp, reason, ml_confidence, liquidity_score, strategy, symbol
 
         logger.info(f"LiveTradingTracker inicializado con balance inicial: ${initial_balance:.2f}")
 
@@ -340,6 +345,10 @@ class LiveTradingTracker:
             'largest_loss': min([t['pnl'] for t in self.trades_history if t['pnl'] < 0], default=0),
             'avg_win': self.total_winning_pnl / self.winning_trades if self.winning_trades > 0 else 0,
             'avg_loss': self.total_losing_pnl / self.losing_trades if self.losing_trades > 0 else 0,
+            # Telemetría de señales
+            'signals_skipped_same_bar': self.signals_skipped_same_bar,
+            'signals_skipped_bar_close': self.signals_skipped_bar_close,
+            'signal_events_count': len(self.signal_events),
         }
 
     def save_to_file(self, filepath: Optional[str] = None) -> None:
@@ -360,15 +369,30 @@ class LiveTradingTracker:
             'metrics': self.get_comprehensive_metrics(),
             'trades_history': self.trades_history,
             'equity_curve': self.equity_curve,
+            'signal_events': self.signal_events,
             'last_save': datetime.now().isoformat()
         }
 
         try:
+            # Guardar JSON
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, default=str)
             logger.info(f"Métricas guardadas en: {filepath}")
+
+            # También guardar CSV con eventos de señal para análisis rápido
+            events_csv = Path(filepath).with_suffix('.signals.csv')
+            if self.signal_events:
+                import csv
+                keys = set().union(*(e.keys() for e in self.signal_events))
+                with open(events_csv, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=list(keys))
+                    writer.writeheader()
+                    for ev in self.signal_events:
+                        writer.writerow({k: ev.get(k, '') for k in keys})
+                logger.info(f"Eventos de señal guardados en CSV: {events_csv}")
+
         except Exception as e:
-            logger.error(f"Error guardando métricas: {e}")
+            logger.error(f"Error guardando métricas o eventos de señal: {e}")
 
     def load_from_file(self, filepath: str) -> bool:
         """
@@ -397,6 +421,9 @@ class LiveTradingTracker:
             self.total_losing_pnl = metrics.get('total_losing_pnl', 0.0)
             self.max_drawdown = metrics.get('max_drawdown', 0.0)
             self.current_drawdown = metrics.get('current_drawdown', 0.0)
+            # Restaurar counters de telemetría de señales
+            self.signals_skipped_same_bar = metrics.get('signals_skipped_same_bar', 0)
+            self.signals_skipped_bar_close = metrics.get('signals_skipped_bar_close', 0)
 
             # Restaurar historiales
             self.trades_history = data.get('trades_history', [])
@@ -404,6 +431,8 @@ class LiveTradingTracker:
 
             # Recalcular métricas
             self._calculate_all_metrics()
+            # Restaurar eventos de señal
+            self.signal_events = data.get('signal_events', [])
 
             logger.info(f"Estado cargado desde: {filepath}")
             return True

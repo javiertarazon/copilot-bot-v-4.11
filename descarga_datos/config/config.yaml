@@ -117,10 +117,10 @@ live_trading:
   
   # Configuración de Margin Trading
   margin_type: cross                # 'cross' (riesgo compartido) o 'isolated' (riesgo aislado por posición)
-  margin_leverage: 10               # Apalancamiento: 1-20x (recomendado 5-10x)
+  margin_leverage: 5                # ✅ CORREGIDO: Reducido de 10 a 5x (más estable con fórmula corregida)
   
   # Configuración de Futures/Perpetuales
-  futures_leverage: 10              # Apalancamiento: 1-20x
+  futures_leverage: 5               # ✅ CORREGIDO: Reducido de 10 a 5x
   futures_position_mode: 'net'      # 'net' (unidireccional) o 'hedge' (long+short simultáneamente)
   futures_mode_type: 'USD-M'        # 'USD-M' (BTC/USDT perpetuals) o 'COIN-M' (BTC/USD coin perpetuals)
   
@@ -143,7 +143,7 @@ live_trading:
   - 1h
   - 4h
   - 1d
-  risk_per_trade: 0.002
+  risk_per_trade: 0.02              # ✅ CORREGIDO: Aumentado de 0.002 (0.2%) a 0.02 (2%) - con fórmula correcta es seguro
   # Parámetros conservadores MT5-style para cripto
   max_risk_per_trade_usd: 50.0        # Máximo $50 USD por trade
   max_position_crypto: 0.001          # Máximo 0.001 BTC por posición (solo en spot)

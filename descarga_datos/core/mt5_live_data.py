@@ -12,6 +12,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from utils.logger import get_logger
+import threading
+
+logger = get_logger(__name__)
+
+# Intentar importar módulo de resiliencia
+try:
+    from utils.resilience import create_resilient_connection_manager
+    RESILIENCE_AVAILABLE = True
+except ImportError:
+    RESILIENCE_AVAILABLE = False
 
 # Intentar importar MT5
 try:
@@ -21,9 +31,6 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
     logger.warning("MetaTrader5 no está disponible. Modo simulado activado.")
-
-logger = get_logger(__name__)
-import threading
 
 class MT5LiveDataProvider:
     def __init__(self, config=None):
@@ -44,6 +51,15 @@ class MT5LiveDataProvider:
         # Configuración de reintentos
         self.max_retries = getattr(config, 'max_retries', 3) if hasattr(config, 'max_retries') else 3
         self.retry_delay = getattr(config, 'retry_delay', 5) if hasattr(config, 'retry_delay') else 5
+        
+        # Gestor de resiliencia con exponential backoff + circuit breaker
+        self.resilience_manager = None
+        if RESILIENCE_AVAILABLE:
+            self.resilience_manager = create_resilient_connection_manager(
+                name="MT5",
+                initial_delay=self.retry_delay,
+                logger=self.logger
+            )
         
         # Rutas para almacenamiento de datos en vivo
         self.data_path = Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_data"
@@ -242,6 +258,60 @@ class MT5LiveDataProvider:
                 return self._initialize_mt5()
             
             return True
+    
+    def check_and_reconnect(self) -> bool:
+        """
+        Verifica el estado de la conexión y reconecta automáticamente si es necesario.
+        Usa resilience manager para exponential backoff + circuit breaker.
+        Método diseñado para ser llamado periódicamente por el health check.
+
+        Returns:
+            bool: True si la conexión está activa (después de reconectar si fue necesario)
+        """
+        if self.resilience_manager:
+            # Usar gestor de resiliencia
+            def reconnection_attempt():
+                self.logger.info("Intentando reconexión automática a MT5...")
+                
+                try:
+                    if self.connected:
+                        self.disconnect()
+                    
+                    success = self._initialize_mt5()
+                    
+                    if success:
+                        self.logger.info("✅ Reconexión exitosa a MT5")
+                        return True
+                    else:
+                        self.logger.error("❌ Falló reconexión a MT5")
+                        raise Exception("Reconexión fallida para MT5")
+                
+                except Exception as e:
+                    self.logger.error(f"Error durante reconexión a MT5: {e}")
+                    raise
+            
+            # Ejecutar con reintentos usando resilience manager
+            success, result, error = self.resilience_manager.execute_with_retry(reconnection_attempt)
+            
+            if success:
+                return True
+            else:
+                self.logger.error(f"Reconexión fallida tras reintentos del resilience manager: {error}")
+                return False
+        else:
+            # Fallback - usar ensure_connection directamente
+            return self.ensure_connection()
+    
+    def get_resilience_status(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna el estado del gestor de resiliencia.
+        
+        Returns:
+            Dict con información del estado o None si no está disponible
+        """
+        if self.resilience_manager:
+            return self.resilience_manager.get_status()
+        return None
     
     def get_live_data(self, symbol: str, timeframe: str, bars: int = 100, with_indicators: bool = True) -> Optional[pd.DataFrame]:
         """

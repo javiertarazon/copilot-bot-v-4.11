@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import logging
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple, Any
 import threading
 from pathlib import Path
 import os
@@ -18,7 +18,9 @@ import asyncio
 # Intentar cargar variables de entorno desde .env (opcional)
 try:
     from dotenv import load_dotenv  # type: ignore
-    load_dotenv('descarga_datos/.env')
+    # Path relativo correcto: desde descarga_datos/core ejecuta main.py en descarga_datos
+    dotenv_path = Path(__file__).parent.parent / '.env'
+    load_dotenv(dotenv_path)
 except ImportError:
     # Si python-dotenv no está disponible, continuar sin él
     # Las variables de entorno pueden estar configuradas directamente
@@ -32,6 +34,22 @@ try:
 except ImportError:
     CCXT_AVAILABLE = False
     logging.warning("CCXT no disponible - Se requiere para trading en vivo de cripto")
+
+# Importar módulo de resiliencia
+try:
+    from utils.resilience import create_resilient_connection_manager
+    RESILIENCE_AVAILABLE = True
+except ImportError:
+    RESILIENCE_AVAILABLE = False
+    logging.warning("Módulo de resiliencia no disponible")
+
+# Importar módulo de caching de indicadores
+try:
+    from utils.indicator_cache import get_indicator_cache
+    INDICATOR_CACHE_AVAILABLE = True
+except ImportError:
+    INDICATOR_CACHE_AVAILABLE = False
+    logging.warning("Módulo de caching de indicadores no disponible")
 
 class CCXTLiveDataProvider:
     """
@@ -79,6 +97,23 @@ class CCXTLiveDataProvider:
         # Exchange CCXT
         self.exchange = None
         self.async_exchange = None
+        # Gestor de resiliencia con exponential backoff + circuit breaker
+        self.resilience_manager = None
+        if RESILIENCE_AVAILABLE:
+            self.resilience_manager = create_resilient_connection_manager(
+                name=f"CCXT-{exchange_name}",
+                initial_delay=self.retry_delay,
+                logger=self.logger
+            )
+        
+        # Cache de indicadores para reducir CPU
+        self.indicator_cache = None
+        if INDICATOR_CACHE_AVAILABLE:
+            self.indicator_cache = get_indicator_cache(
+                max_entries=50,           # Máx 50 entradas de indicadores
+                default_ttl=300,          # 5 minutos TTL
+                logger=self.logger
+            )
 
         # Rutas para almacenamiento de datos en vivo
         self.data_path = Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_data"
@@ -220,30 +255,67 @@ class CCXTLiveDataProvider:
     def _attempt_reconnection(self) -> bool:
         """
         Intenta reconectar automáticamente al exchange después de una desconexión.
+        Usa exponential backoff + circuit breaker para máxima resiliencia.
 
         Returns:
             bool: True si la reconexión fue exitosa
         """
-        self.logger.info(f"Intentando reconexión automática a {self.exchange_name}...")
+        if self.resilience_manager:
+            # Usar gestor de resiliencia con exponential backoff + circuit breaker
+            def reconnection_attempt():
+                self.logger.info(f"Intentando reconexión automática a {self.exchange_name}...")
+                
+                try:
+                    # Desconectar primero si hay una conexión existente
+                    if self.connected:
+                        self.disconnect()
 
-        try:
-            # Desconectar primero si hay una conexión existente
-            if self.connected:
-                self.disconnect()
+                    # Intentar reconectar
+                    success = self.connect()
 
-            # Intentar reconectar
-            success = self.connect()
-
+                    if success:
+                        self.logger.info(f"✅ Reconexión exitosa a {self.exchange_name}")
+                        return True
+                    else:
+                        self.logger.error(f"❌ Falló reconexión a {self.exchange_name}")
+                        raise Exception(f"Reconexión fallida para {self.exchange_name}")
+                
+                except Exception as e:
+                    self.logger.error(f"Error durante reconexión a {self.exchange_name}: {e}")
+                    raise
+            
+            # Ejecutar con reintentos usando resilience manager
+            success, result, error = self.resilience_manager.execute_with_retry(reconnection_attempt)
+            
             if success:
-                self.logger.info(f"✅ Reconexión exitosa a {self.exchange_name}")
                 return True
             else:
-                self.logger.error(f"❌ Falló reconexión a {self.exchange_name}")
+                self.logger.error(
+                    f"Reconexión fallida tras reintentos del resilience manager: {error}"
+                )
                 return False
+        else:
+            # Fallback si resilience manager no está disponible
+            self.logger.info(f"Intentando reconexión automática a {self.exchange_name}...")
 
-        except Exception as e:
-            self.logger.error(f"Error durante reconexión a {self.exchange_name}: {e}")
-            return False
+            try:
+                # Desconectar primero si hay una conexión existente
+                if self.connected:
+                    self.disconnect()
+
+                # Intentar reconectar
+                success = self.connect()
+
+                if success:
+                    self.logger.info(f"✅ Reconexión exitosa a {self.exchange_name}")
+                    return True
+                else:
+                    self.logger.error(f"❌ Falló reconexión a {self.exchange_name}")
+                    return False
+
+            except Exception as e:
+                self.logger.error(f"Error durante reconexión a {self.exchange_name}: {e}")
+                return False
 
     def check_and_reconnect(self) -> bool:
         """
@@ -266,6 +338,28 @@ class CCXTLiveDataProvider:
             return self._attempt_reconnection()
 
         return self.is_connected()
+
+    def get_resilience_status(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna el estado del gestor de resiliencia.
+        
+        Returns:
+            Dict con información del estado o None si no está disponible
+        """
+        if self.resilience_manager:
+            return self.resilience_manager.get_status()
+        return None
+    
+    def get_indicator_cache_status(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna el estado del cache de indicadores.
+        
+        Returns:
+            Dict con estadísticas del cache o None si no está disponible
+        """
+        if self.indicator_cache:
+            return self.indicator_cache.get_stats()
+        return None
 
     def get_last_price(self, symbol: str) -> Optional[float]:
         """
@@ -314,12 +408,16 @@ class CCXTLiveDataProvider:
 
         cache_key = f"{symbol}_{timeframe}_{with_indicators}"
         try:
-            # Verificar cache primero
+            # Verificar cache primero - TIMEOUT AJUSTADO A 30 SEGUNDOS PARA LIVE TRADING
+            # Mantener cache corto para garantizar datos frescos en cada ciclo
             if cache_key in self.data_cache:
                 cached_data = self.data_cache[cache_key]
-                # Si los datos son recientes (menos de 5 minutos), devolver cache
-                if (datetime.now() - cached_data['timestamp']).seconds < 300:
+                cache_timeout = 30  # 30 segundos para datos frescos
+                if (datetime.now() - cached_data['timestamp']).seconds < cache_timeout:
+                    self.logger.debug(f"Usando datos cacheados para {cache_key}")
                     return cached_data['data']
+                else:
+                    self.logger.debug(f"Cache expirado para {cache_key}, obteniendo datos frescos...")
 
             # PARA TIMEFRAMES CORTOS, SIEMPRE USAR AGRUPACIÓN PARA OBTENER MÁS DATOS HISTÓRICOS
             if timeframe in ['15m', '5m']:

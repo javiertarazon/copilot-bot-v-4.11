@@ -401,10 +401,55 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
                 "Configuración inválida: estrategias habilitadas no existen o tienen errores"
             )
 
+        # ✅ INYECTAR CREDENCIALES DE VARIABLES DE ENTORNO
+        # Después de cargar el YAML, sobrescribimos con variables de entorno si existen
+        _inject_env_credentials(config)
+
         return config
 
     except Exception as e:
         raise RuntimeError(f"Error cargando configuración: {e}")
+
+
+def _inject_env_credentials(config: Config) -> None:
+    """
+    Inyecta credenciales desde variables de entorno a la configuración.
+    Prioridad: Variables de entorno > config.yaml
+    
+    Busca:
+    - BINANCE_API_KEY, BINANCE_API_SECRET
+    - BINANCE_TEST_API_KEY, BINANCE_TEST_API_SECRET
+    - BYBIT_API_KEY, BYBIT_API_SECRET
+    """
+    import os
+    
+    # Cargar .env si python-dotenv está disponible
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        dotenv_path = Path(__file__).parent.parent / '.env'
+        load_dotenv(dotenv_path)
+    except ImportError:
+        pass  # Continuar sin dotenv, usar variables del sistema
+    
+    # Inyectar credenciales de Binance (preferir TEST keys si existen)
+    if 'binance' in config.exchanges:
+        binance_key = os.getenv('BINANCE_TEST_API_KEY') or os.getenv('BINANCE_API_KEY', '')
+        binance_secret = os.getenv('BINANCE_TEST_API_SECRET') or os.getenv('BINANCE_API_SECRET', '')
+        
+        if binance_key:
+            config.exchanges['binance'].api_key = binance_key
+        if binance_secret:
+            config.exchanges['binance'].api_secret = binance_secret
+    
+    # Inyectar credenciales de Bybit
+    if 'bybit' in config.exchanges:
+        bybit_key = os.getenv('BYBIT_API_KEY', '')
+        bybit_secret = os.getenv('BYBIT_API_SECRET', '')
+        
+        if bybit_key:
+            config.exchanges['bybit'].api_key = bybit_key
+        if bybit_secret:
+            config.exchanges['bybit'].api_secret = bybit_secret
 
 
 def save_config_to_yaml(config: Config, config_path: Optional[str] = None) -> None:
