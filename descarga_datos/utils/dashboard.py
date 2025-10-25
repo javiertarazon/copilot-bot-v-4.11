@@ -7,6 +7,12 @@ from plotly.subplots import make_subplots
 import numpy as np
 import yaml
 from datetime import datetime
+import sys
+import os
+
+# Agregar ruta al path para imports correctos
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from utils.logger import get_logger
 
 # Inicializar logger

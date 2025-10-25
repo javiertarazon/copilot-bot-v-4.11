@@ -2,7 +2,7 @@ active_exchange: binance
 backtesting:
   commission: 0.1
   data_quality: null
-  end_date: '2025-10-16'
+  end_date: '2025-10-24'
   initial_capital: 800  # Capital inicial cambiado a 800 USDT
   optimized_parameters:
     BTC_USDT:
@@ -27,7 +27,7 @@ backtesting:
       take_profit_atr_multiplier: 3.75
       volume_ratio_min: 0.3
   slippage: 0.05
-  start_date: '2025-01-01'
+  start_date: '2024-06-01'
   strategies:
     HeikinNeuronalMLPruebas: false
     UltraDetailedHeikinAshiML: true
