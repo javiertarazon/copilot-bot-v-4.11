@@ -89,7 +89,17 @@ class CCXTOrderExecutor:
             self.max_positions = live_config.get('max_positions', max_positions or 5)
         
         # ⭐ CARGAR CONFIGURACIÓN DE TIPO DE TRADING
-        self.trading_mode = live_config.get('trading_mode', 'spot')  # 'spot', 'margin', 'futures'
+        # ⚠️ IMPORTANTE: Solo se permite MARGIN y FUTURES. SPOT ha sido eliminado del sistema.
+        self.trading_mode = live_config.get('trading_mode', 'margin')  # SOLO: 'margin' o 'futures'
+        
+        # Validar que solo sea margin o futures (eliminar spot)
+        if self.trading_mode.lower() not in ['margin', 'futures']:
+            raise ValueError(
+                f"❌ ERROR: trading_mode '{self.trading_mode}' no es válido.\n"
+                f"Solo se permite: 'margin' (apalancamiento) o 'futures' (perpetuos).\n"
+                f"SPOT ha sido eliminado del sistema. Actualiza config.yaml"
+            )
+        
         self.margin_type = live_config.get('margin_type', 'cross')    # 'cross' o 'isolated'
         self.margin_leverage = live_config.get('margin_leverage', 1)  # 1-20x
         self.futures_leverage = live_config.get('futures_leverage', 1)  # 1-20x
@@ -103,11 +113,11 @@ class CCXTOrderExecutor:
 
         # Configurar logger
         self.logger = setup_logger('CCXTOrderExecutor')
-        self.logger.info(f"Modo de trading: {self.trading_mode.upper()}")
+        self.logger.info(f"[OK] Modo de trading: {self.trading_mode.upper()}")
         if self.trading_mode == 'margin':
-            self.logger.info(f"  Apalancamiento: {self.margin_leverage}x ({self.margin_type})")
+            self.logger.info(f"     Apalancamiento MARGIN: {self.margin_leverage}x ({self.margin_type})")
         elif self.trading_mode == 'futures':
-            self.logger.info(f"  Apalancamiento: {self.futures_leverage}x ({self.futures_mode_type})")
+            self.logger.info(f"     Apalancamiento FUTURES: {self.futures_leverage}x ({self.futures_mode_type})")
         self.logger.info(f"Límite de posiciones: {'HABILITADO' if self.enable_position_limit else 'DESACTIVADO'} (max={self.max_positions})")
         self.connected = False
         self.connection_lock = threading.Lock()

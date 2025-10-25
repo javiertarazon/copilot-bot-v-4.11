@@ -52,10 +52,20 @@ backtesting:
   symbol_selection:
     BTC/USDT: true
   
-  symbols:
-  - BTC/USDT
+  # ========== TIPO DE TRADING ==========
+  # ⚠️ IMPORTANTE: Solo se permite MARGIN (apalancamiento) o FUTURES (perpetuos)
+  # SPOT ha sido ELIMINADO del sistema - no es viable
+  # Opciones VÁLIDAS: 'margin' (apalancado 1-20x) o 'futures' (perpetuos 1-20x)
+  trading_mode: margin              # MARGIN: Apalancamiento directo | FUTURES: Perpetuos sin vencimiento
   
-  timeframe: 15m
+  # Configuración de Margin Trading (MARGIN MODE)
+  margin_type: cross                # 'cross' (riesgo compartido) o 'isolated' (riesgo aislado)
+  margin_leverage: 5                # 5x para pruebas
+  
+  # Configuración de Futures/Perpetuales (FUTURES MODE)
+  futures_leverage: 5               # 5x para pruebas
+  futures_position_mode: 'net'      # 'net' (unidireccional) o 'hedge'
+  futures_mode_type: 'USD-M'        # 'USD-M' (BTC/USDT perpetuals) o 'COIN-M'
 
 compensation_strategy:
   compensation_max_loss: 1.0
