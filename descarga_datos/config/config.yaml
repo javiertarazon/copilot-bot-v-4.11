@@ -89,13 +89,14 @@ backtesting:
   margin_type: cross                # 'cross' (riesgo compartido)
   margin_leverage: 1                # 1x para demo (sin apalancamiento inicial)
 
-# ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV
+# ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.9)
 live_trading:
   # Configuración de cuenta y modo de trading
   account_type: 'DEMO'              # 'DEMO' para Deriv demo account
   trading_mode: 'margin'            # 'margin' para MT5 Deriv
   enable_position_limit: true       # Limitar posiciones concurrentes
-  max_positions: 1                  # Máximo 1 posición concurrente
+  max_positions: 5                  # Máximo 5 posiciones concurrentes (v4.9 FIX)
+  allow_multiple_positions_same_symbol: true  # Permite múltiples por símbolo (v4.9 FIX)
   
   # Configuración de riesgo
   risk_per_trade: 0.02              # 2% riesgo por trade
@@ -103,6 +104,7 @@ live_trading:
   
   # Configuración de sincronización
   position_sync_timeout: 5          # Timeout para sincronización de posiciones
+  position_sync_interval_seconds: 30  # Reducido a 30 seg para sincronización más rápida (v4.9)
   position_sync_interval: 10        # Intervalo entre sincronizaciones
   use_open_orders_only: false       # Usar solo órdenes abiertas para sincronización
   
@@ -112,6 +114,11 @@ live_trading:
   # Configuración específica de MT5
   margin_type: 'cross'              # 'cross' para Deriv
   margin_leverage: 1                # 1x leverage (sin apalancamiento para demo)
+  
+  # Configuración de cierre automático (v4.9)
+  enable_auto_close_tp_sl: true     # Habilitar cierre automático en TP/SL
+  enable_trailing_stop: true        # Habilitar trailing stop dinámico
+  trailing_stop_pct: 0.65           # Trailing stop al 0.65%
 
 compensation_strategy:
   compensation_max_loss: 1.0

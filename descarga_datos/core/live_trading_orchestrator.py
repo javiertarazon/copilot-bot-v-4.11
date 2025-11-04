@@ -625,9 +625,11 @@ class LiveTradingOrchestrator:
             # Verificar si ya tenemos una posición abierta para este símbolo
             existing_position = self.order_executor.get_position(symbol)
             position_action = None
+            allow_multiple = self.live_config.get('allow_multiple_positions_same_symbol', True)  # v4.9 FIX
             
             if action == 'BUY':
-                if existing_position:
+                if existing_position and not allow_multiple:
+                    # ANTIGUO COMPORTAMIENTO: Solo 1 posición por símbolo
                     if existing_position['type'] == 'SELL':
                         # Cerrar posición corta existente y abrir larga
                         self.order_executor.close_position(symbol)
@@ -636,6 +638,13 @@ class LiveTradingOrchestrator:
                         # Ya tenemos una posición larga, no hacer nada
                         logger.info(f"Ignorando señal BUY para {symbol}: ya existe posición LONG")
                         return
+                elif existing_position and existing_position['type'] == 'SELL' and allow_multiple:
+                    # NUEVO COMPORTAMIENTO v4.9: Permitir múltiples, pero cerrar contra-posición
+                    logger.info(f"[v4.9] Cerrando posición SELL para abrir BUY en {symbol}")
+                    self.order_executor.close_position(symbol)
+                    position_action = "cerrada posición SELL existente"
+                    import time
+                    time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
                 stop_loss = signal_details.get('stop_loss', current_price * 0.95)
@@ -664,7 +673,8 @@ class LiveTradingOrchestrator:
                     logger.error(f"Error al abrir posición LONG para {symbol}: {result['message']}")
                     
             elif action == 'SELL':
-                if existing_position:
+                if existing_position and not allow_multiple:
+                    # ANTIGUO COMPORTAMIENTO: Solo 1 posición por símbolo
                     if existing_position['type'] == 'BUY':
                         # Cerrar posición larga existente y abrir corta
                         self.order_executor.close_position(symbol)
@@ -673,6 +683,13 @@ class LiveTradingOrchestrator:
                         # Ya tenemos una posición corta, no hacer nada
                         logger.info(f"Ignorando señal SELL para {symbol}: ya existe posición SHORT")
                         return
+                elif existing_position and existing_position['type'] == 'BUY' and allow_multiple:
+                    # NUEVO COMPORTAMIENTO v4.9: Permitir múltiples, pero cerrar contra-posición
+                    logger.info(f"[v4.9] Cerrando posición BUY para abrir SELL en {symbol}")
+                    self.order_executor.close_position(symbol)
+                    position_action = "cerrada posición BUY existente"
+                    import time
+                    time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
                 stop_loss = signal_details.get('stop_loss', current_price * 1.05)
