@@ -137,13 +137,14 @@ class TechnicalIndicators:
             ha_df.loc[:, 'ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
             
             # Inicializar ha_open
-            ha_opens = pd.Series(index=df.index)
+            ha_opens = pd.Series(index=df.index, dtype=float)
             ha_opens.iloc[0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
             
-            # Calcular ha_open de manera vectorizada para el resto
-            prev_ha_open = pd.Series(index=df.index)
-            prev_ha_open.iloc[1:] = ha_df['ha_close'].iloc[:-1].values
-            ha_opens.iloc[1:] = (ha_opens.shift().iloc[1:] + prev_ha_open.iloc[1:]) / 2
+            # Calcular ha_open para el resto de las velas
+            for i in range(1, len(df)):
+                prev_ha_open = ha_opens.iloc[i-1]
+                prev_ha_close = ha_df['ha_close'].iloc[i-1]
+                ha_opens.iloc[i] = (prev_ha_open + prev_ha_close) / 2
             
             # Asignar ha_open usando .loc
             ha_df.loc[:, 'ha_open'] = ha_opens
@@ -578,12 +579,28 @@ class TechnicalIndicators:
                 result_df['bb_lower'] = np.nan
                 result_df['bb_width'] = np.nan
             
-            # Verificar que tenemos todas las columnas necesarias
-            required_columns = ['open', 'high', 'low', 'close', 'volume', 'timestamp']
+            # Verificar que tenemos OHLCV (timestamp es opcional)
+            required_columns = ['open', 'high', 'low', 'close', 'volume']
             missing_columns = [col for col in required_columns if col not in result_df.columns]
             if missing_columns:
-                self.logger.error(f"Faltan columnas requeridas: {missing_columns}")
-                
+                self.logger.error(f"Faltan columnas OHLCV requeridas: {missing_columns}")
+            
+            # Agregar timestamp si no existe (opcional para backtest)
+            if 'timestamp' not in result_df.columns:
+                self.logger.debug("Timestamp no presente, agregando índice como timestamp")
+                result_df['timestamp'] = range(len(result_df))
+            
+            # Calcular características ML adicionales requeridas por el modelo
+            # Estas características se calculan en prepare_features() pero deben estar disponibles aquí
+            result_df['returns'] = result_df['close'].pct_change()
+            result_df['log_returns'] = np.log(result_df['close'] / result_df['close'].shift(1))
+            result_df['momentum_5'] = result_df['close'] - result_df['close'].shift(5)
+            result_df['momentum_10'] = result_df['close'] - result_df['close'].shift(10)
+            result_df['price_position'] = (result_df['close'] - result_df['close'].rolling(50).min()) / (result_df['close'].rolling(50).max() - result_df['close'].rolling(50).min())
+            result_df['volume_ratio'] = result_df['volume'] / result_df['volume'].rolling(20).mean()
+            # Evitar división por cero o NaN en volume_ratio
+            result_df['volume_ratio'] = result_df['volume_ratio'].fillna(1.0).replace([np.inf, -np.inf], 1.0)
+            
             return result_df
         except Exception as e:
             self.logger.error(f"Error calculando todos los indicadores: {e}")

@@ -65,7 +65,7 @@ class CCXTOrderExecutor:
             config: Configuración desde config.yaml
             live_data_provider: Opcional, instancia de CCXTLiveDataProvider
             exchange_name: Nombre del exchange (bybit, binance, etc.)
-            risk_per_trade: Porcentaje de riesgo por operación (0.01 = 1%)
+            risk_per_trade: Porcentaje de riesgo por operación (0.02 = 2%, alineado con backtest)
             max_positions: Número máximo de posiciones abiertas simultáneamente
         """
         # Cargar configuración si no se proporciona
@@ -79,7 +79,8 @@ class CCXTOrderExecutor:
         self.live_data_provider = live_data_provider
 
         # Usar valores proporcionados o valores por defecto
-        self.risk_per_trade = risk_per_trade or 0.01  # 1% por defecto
+        # ✅ CORREGIDO: Alineado con backtest (2% riesgo por trade)
+        self.risk_per_trade = risk_per_trade or 0.02  # 2% por defecto (consistente con backtest)
         self.max_positions = max_positions or 5
         
         # Cargar configuración de límite de posiciones desde config.yaml
@@ -138,6 +139,11 @@ class CCXTOrderExecutor:
 
         # Gestión de riesgo
         self.risk_manager = None
+        
+        # ✅ FIX v4.2: Captura de capital inicial para limitadores (patrón Freqtrade)
+        self.initial_portfolio_value = None  # Se captura en primera ejecución
+        self.max_capital_multiplier = 10.0   # Máximo 10x del capital inicial
+        self.max_position_pct = 0.10         # Máximo 10% del capital inicial por trade
 
         # Inicializar exchange
         if CCXT_AVAILABLE:
@@ -380,6 +386,11 @@ class CCXTOrderExecutor:
         Returns:
             float: Tamaño de posición calculado (SIN multiplicar por leverage)
         """
+        # ✅ FIX v4.2: Capturar capital inicial en primera ejecución
+        if self.initial_portfolio_value is None:
+            self.initial_portfolio_value = portfolio_value
+            self.logger.info(f"✅ Fix v4.2: initial_portfolio_value capturado = ${self.initial_portfolio_value:.2f}")
+        
         risk_amount = portfolio_value * risk_pct
         base_size = risk_amount / risk_distance if risk_distance > 0 else 0
         
@@ -403,6 +414,31 @@ class CCXTOrderExecutor:
                     f"Posición reducida por límite de margen. "
                     f"Margen requerido: ${margin_required:,.2f}, "
                     f"Portfolio: ${portfolio_value:,.2f}"
+                )
+        
+        # ✅ FIX v4.2: Limitar position_size para prevenir explosión de capital compuesto (Patrón Freqtrade)
+        if self.initial_portfolio_value is not None and self.initial_portfolio_value > 0:
+            # Máximo 10% del capital INICIAL por trade (no del capital compuesto)
+            max_position_usd = self.initial_portfolio_value * self.max_position_pct
+            max_position_coins = max_position_usd / entry_price if entry_price > 0 else 0
+            
+            if base_size > max_position_coins:
+                self.logger.debug(
+                    f"[LIMIT Fix v4.2] Position size limitado: {base_size:.4f} → {max_position_coins:.4f} "
+                    f"(max {self.max_position_pct*100}% del capital inicial ${self.initial_portfolio_value:.2f})"
+                )
+                base_size = max_position_coins
+            
+            # Validar límite de capital compuesto (máximo 10x del inicial)
+            max_portfolio = self.initial_portfolio_value * self.max_capital_multiplier
+            if portfolio_value > max_portfolio:
+                # Reducir position_size proporcionalmente
+                scale_factor = max_portfolio / portfolio_value
+                base_size *= scale_factor
+                self.logger.warning(
+                    f"[LIMIT Fix v4.2] Capital excede {self.max_capital_multiplier}x inicial. "
+                    f"Portfolio: ${portfolio_value:.2f} > Max: ${max_portfolio:.2f}. "
+                    f"Position reducido por factor {scale_factor:.2f}"
                 )
         
         # ✅ RETORNAR CANTIDAD SIN MULTIPLICAR POR LEVERAGE
@@ -717,23 +753,30 @@ class CCXTOrderExecutor:
             except Exception as e:
                 self.logger.warning(f"Error verificando balance: {e}")
             
-            # Determinar el tipo de orden correcto para CCXT
-            ccxt_order_type = 'market'  # Por defecto usar órdenes de mercado
-            if price is not None and order_type in [OrderType.LIMIT_BUY, OrderType.LIMIT_SELL]:
-                ccxt_order_type = 'limit'
-            
             # Determinar el lado de la orden
             ccxt_side = 'buy' if order_type in [OrderType.BUY, OrderType.LIMIT_BUY, OrderType.STOP_BUY] else 'sell'
 
+            # ✅ USAR LIMIT ORDERS COMO EN TEST EXITOSO
+            # Market orders fallan en Bybit testnet con "price is higher than maximum"
+            # Usar limit con precio ligeramente favorable para ejecución inmediata
+            ccxt_order_type = 'limit'
+            
+            if price is None:
+                # Si no hay precio, obtener precio actual y ajustar para ejecución rápida
+                ticker = self.exchange.fetch_ticker(symbol)
+                current_price = ticker['last']
+                # Para BUY: 0.5% por encima para asegurar ejecución
+                # Para SELL: 0.5% por debajo para asegurar ejecución
+                price = current_price * 1.005 if ccxt_side == 'buy' else current_price * 0.995
+                self.logger.info(f"📊 Precio ajustado para limit order: ${price:.2f} (current: ${current_price:.2f})")
+
             order_params = {
                 'symbol': symbol,
-                'type': ccxt_order_type,  # 'market' o 'limit'
+                'type': ccxt_order_type,  # Siempre 'limit'
                 'side': ccxt_side,        # 'buy' o 'sell'
-                'amount': quantity
+                'amount': quantity,
+                'price': price            # Precio siempre presente en limit
             }
-
-            if price is not None:
-                order_params['price'] = price
 
             # Intentar adquirir lock para evitar órdenes duplicadas cercanas en el tiempo
             lock_acquired = False
@@ -832,7 +875,14 @@ class CCXTOrderExecutor:
             position['close_price'] = order.get('price', 0)
             position['close_time'] = datetime.now()
             position['status'] = 'closed'
-            position['pnl'] = self._calculate_pnl(position)
+            
+            # ✅ FIX #4: Usar PnL CON comisiones (nuevo) en lugar de PnL sin comisiones
+            pnl_details = self._calculate_pnl_with_fees(position)
+            position['pnl'] = pnl_details['pnl_net']  # PnL neto después de comisiones
+            position['pnl_gross'] = pnl_details['pnl_gross']
+            position['entry_fee'] = pnl_details['entry_fee']
+            position['exit_fee'] = pnl_details['exit_fee']
+            position['total_fees'] = pnl_details['total_fees']
 
             # Mover a historial
             self.position_history.append(position)
@@ -843,6 +893,108 @@ class CCXTOrderExecutor:
 
         except Exception as e:
             self.logger.error(f"Error cerrando posición {ticket}: {e}")
+            return False
+
+    def close_position_safe(self, ticket: str, force_close: bool = False) -> bool:
+        """
+        Cierra posición de forma segura verificando su estado en Binance.
+        
+        Args:
+            ticket: ID de la posición
+            force_close: Si True, intenta cerrar aunque no esté en sistema
+            
+        Returns:
+            bool: True si se cerró exitosamente o ya estaba cerrada
+        """
+        try:
+            # 1. Verificar que la posición existe en el sistema
+            if ticket not in self.open_positions and not force_close:
+                self.logger.warning(f"⚠️  Posición {ticket} no encontrada en sistema (ya cerrada?)")
+                return True
+            
+            position = self.open_positions.get(ticket, {})
+            symbol = position.get('symbol')
+            
+            if not symbol:
+                self.logger.error(f"❌ No se puede cerrar posición {ticket}: símbolo no encontrado")
+                return False
+            
+            # 2. Verificar estado en Binance
+            try:
+                real_order = self.exchange.fetch_order(ticket, symbol)
+                
+                # ¿Ya está cerrada?
+                if real_order.get('status') in ['closed', 'canceled']:
+                    self.logger.info(f"✅ Posición {ticket} ya está cerrada en Binance")
+                    # Remover del sistema
+                    if ticket in self.open_positions:
+                        del self.open_positions[ticket]
+                    return True
+                
+                # ¿Está parcialmente ejecutada?
+                if real_order.get('filled', 0) > 0 and real_order.get('filled') < real_order.get('amount', 0):
+                    self.logger.warning(f"⚠️  Posición {ticket} parcialmente ejecutada: {real_order['filled']}/{real_order['amount']}")
+                    # Intentar cancelar
+                    try:
+                        self.exchange.cancel_order(ticket, symbol)
+                        self.logger.info(f"Orden parcial {ticket} cancelada")
+                    except Exception as cancel_err:
+                        self.logger.warning(f"No se pudo cancelar orden parcial: {cancel_err}")
+            
+            except Exception as fetch_err:
+                self.logger.warning(f"No se pudo verificar orden en Binance: {fetch_err}")
+                # Continuar intentando cerrar localmente
+            
+            # 3. Intentar cerrar si está abierta
+            quantity = position.get('quantity', position.get('size'))
+            position_type = position.get('type', 'buy')
+            
+            if not quantity:
+                self.logger.error(f"❌ No se puede cerrar: cantidad no encontrada para {ticket}")
+                return False
+            
+            try:
+                # ✅ USAR LIMIT ORDERS PARA CERRAR (como en test exitoso)
+                # Market orders fallan en Bybit testnet
+                ticker = self.exchange.fetch_ticker(symbol)
+                current_price = ticker['last']
+                
+                if position_type == 'buy':
+                    # Cerrar LONG con SELL limit ligeramente por debajo
+                    close_price = current_price * 0.995  # 0.5% por debajo
+                    close_order = self.exchange.create_limit_sell_order(
+                        symbol,
+                        quantity,
+                        close_price,
+                        params={'reduceOnly': True}
+                    )
+                else:
+                    # Cerrar SHORT con BUY limit ligeramente por encima
+                    close_price = current_price * 1.005  # 0.5% por encima
+                    close_order = self.exchange.create_limit_buy_order(
+                        symbol,
+                        quantity,
+                        close_price,
+                        params={'reduceOnly': True}
+                    )
+                
+                self.logger.info(f"✅ Orden de cierre creada para {ticket}")
+                self.logger.info(f"   Orden ID: {close_order.get('id')}")
+                self.logger.info(f"   Cantidad: {close_order.get('amount')}")
+                self.logger.info(f"   Precio límite: ${close_price:.2f}")
+                
+                # Remover del sistema
+                if ticket in self.open_positions:
+                    del self.open_positions[ticket]
+                
+                return True
+            
+            except Exception as close_err:
+                self.logger.error(f"❌ Error cerrando posición {ticket}: {close_err}")
+                return False
+        
+        except Exception as e:
+            self.logger.error(f"❌ Error en close_position_safe para {ticket}: {e}")
             return False
 
     def _calculate_pnl(self, position: Dict) -> float:
@@ -868,6 +1020,163 @@ class CCXTOrderExecutor:
         except Exception as e:
             self.logger.error(f"Error calculando PnL: {e}")
             return 0.0
+
+    def _calculate_pnl_with_fees(self, position: Dict) -> Dict[str, float]:
+        """
+        ✅ FIX #4: Calcula PnL REAL incluyendo comisiones de Binance (0.1%).
+        
+        Problema Original: Sistema calculaba PnL sin incluir comisiones,
+        lo que generaba discrepancia de $225 USDT entre sistema y realidad.
+        
+        Args:
+            position: Dict con {
+                'entry_price': float,
+                'exit_price': float,
+                'quantity': float,
+                'type': 'buy' or 'sell'
+            }
+        
+        Returns:
+            Dict con {
+                'pnl_gross': float,        # PnL antes de comisiones
+                'entry_fee': float,        # Comisión entrada (0.1%)
+                'exit_fee': float,         # Comisión salida (0.1%)
+                'total_fees': float,       # Suma de ambas comisiones
+                'pnl_net': float,          # PnL después de comisiones
+                'pnl_net_pct': float       # PnL neto en porcentaje
+            }
+        """
+        try:
+            entry_price = position.get('entry_price', 0)
+            exit_price = position.get('exit_price', 0)
+            quantity = position.get('quantity', 0)
+            position_type = position.get('type', 'buy')
+            
+            # Binance SPOT comisión: 0.1% (0.001)
+            BINANCE_FEE_RATE = 0.001
+            
+            # Calcular PnL bruto (sin comisiones)
+            if position_type == 'buy':
+                pnl_gross = (exit_price - entry_price) * quantity
+            else:  # sell
+                pnl_gross = (entry_price - exit_price) * quantity
+            
+            # Calcular comisiones
+            # Comisión de entrada: 0.1% sobre capital invertido
+            entry_capital = entry_price * quantity
+            entry_fee = entry_capital * BINANCE_FEE_RATE
+            
+            # Comisión de salida: 0.1% sobre cantidad de criptos vendidos
+            exit_capital = exit_price * quantity
+            exit_fee = exit_capital * BINANCE_FEE_RATE
+            
+            # Total de comisiones
+            total_fees = entry_fee + exit_fee
+            
+            # PnL neto (restando comisiones)
+            pnl_net = pnl_gross - total_fees
+            
+            # PnL neto en porcentaje
+            if entry_capital > 0:
+                pnl_net_pct = (pnl_net / entry_capital) * 100
+            else:
+                pnl_net_pct = 0.0
+            
+            result = {
+                'pnl_gross': round(pnl_gross, 8),
+                'entry_fee': round(entry_fee, 8),
+                'exit_fee': round(exit_fee, 8),
+                'total_fees': round(total_fees, 8),
+                'pnl_net': round(pnl_net, 8),
+                'pnl_net_pct': round(pnl_net_pct, 4)
+            }
+            
+            self.logger.debug(
+                f"PnL con comisiones - Bruto: ${pnl_gross:.8f}, "
+                f"Comisiones: ${total_fees:.8f}, Neto: ${pnl_net:.8f} ({pnl_net_pct:.4f}%)"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando PnL con comisiones: {e}")
+            return {
+                'pnl_gross': 0.0,
+                'entry_fee': 0.0,
+                'exit_fee': 0.0,
+                'total_fees': 0.0,
+                'pnl_net': 0.0,
+                'pnl_net_pct': 0.0
+            }
+
+    def _calculate_unrealized_pnl(self, position: Dict, current_price: float) -> Dict[str, float]:
+        """
+        ✅ FIX #4 (Parte 2): Calcula PnL NO REALIZADO para posiciones abiertas.
+        
+        Para posiciones abiertas, NO se incluyen comisiones de salida
+        porque la posición aún no ha sido cerrada.
+        Se incluye solo la comisión de entrada que ya fue pagada.
+        
+        Args:
+            position: Dict con {
+                'entry_price': float,
+                'quantity': float,
+                'type': 'buy' or 'sell'
+            }
+            current_price: Precio actual del activo
+        
+        Returns:
+            Dict con {
+                'unrealized_pnl': float,     # PnL no realizado (sin comisión salida)
+                'unrealized_pnl_pct': float, # En porcentaje
+                'entry_fee_paid': float      # Comisión ya pagada (entrada)
+            }
+        """
+        try:
+            entry_price = position.get('entry_price', 0)
+            quantity = position.get('quantity', 0)
+            position_type = position.get('type', 'buy')
+            
+            BINANCE_FEE_RATE = 0.001
+            
+            # Calcular PnL sin considerar comisión de salida (aún no cerrado)
+            if position_type == 'buy':
+                pnl_gross = (current_price - entry_price) * quantity
+            else:  # sell
+                pnl_gross = (entry_price - current_price) * quantity
+            
+            # Restar solo comisión de entrada (que ya fue pagada)
+            entry_capital = entry_price * quantity
+            entry_fee_paid = entry_capital * BINANCE_FEE_RATE
+            
+            unrealized_pnl = pnl_gross - entry_fee_paid
+            
+            # Porcentaje
+            if entry_capital > 0:
+                unrealized_pnl_pct = (unrealized_pnl / entry_capital) * 100
+            else:
+                unrealized_pnl_pct = 0.0
+            
+            result = {
+                'unrealized_pnl': round(unrealized_pnl, 8),
+                'unrealized_pnl_pct': round(unrealized_pnl_pct, 4),
+                'entry_fee_paid': round(entry_fee_paid, 8)
+            }
+            
+            self.logger.debug(
+                f"PnL no realizado - Gross: ${pnl_gross:.8f}, "
+                f"Comisión entrada: ${entry_fee_paid:.8f}, Neto: ${unrealized_pnl:.8f} ({unrealized_pnl_pct:.4f}%)"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando PnL no realizado: {e}")
+            return {
+                'unrealized_pnl': 0.0,
+                'unrealized_pnl_pct': 0.0,
+                'entry_fee_paid': 0.0
+            }
 
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """

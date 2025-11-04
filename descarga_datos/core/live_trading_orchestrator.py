@@ -22,9 +22,10 @@ import queue
 # Importar usando rutas absolutas
 from config.config_loader import load_config
 from core.mt5_live_data import MT5LiveDataProvider
-from core.mt5_order_executor import MT5OrderExecutor
+from core.mt5_order_executor import MT5OrderExecutor, OrderType
 from utils.logger import setup_logger
 from risk_management.risk_management import apply_risk_management
+from utils.position_synchronizer import PositionSynchronizer
 
 # Configurar logging
 logger = setup_logger('LiveTradingOrchestrator')
@@ -58,6 +59,12 @@ class LiveTradingOrchestrator:
             account_type=self.live_config.get('account_type', 'DEMO'),
             risk_per_trade=self.live_config.get('risk_per_trade', 0.01),
             max_positions=self.live_config.get('max_positions', 5)
+        )
+        
+        # Inicializar sincronizador de posiciones
+        self.position_synchronizer = PositionSynchronizer(
+            order_executor=self.order_executor,
+            logger=logger
         )
         
         # Variables para tracking de operaciones
@@ -96,34 +103,34 @@ class LiveTradingOrchestrator:
         strategy_paths = self.config.get('backtesting', {}).get('strategy_paths', {})
         live_strategy_mapping = self.live_config.get('strategy_mapping', {})
 
-        logger.info(f"🔍 Buscando estrategias activas en backtesting: {list(backtesting_strategies.keys())}")
+        logger.info(f" Buscando estrategias activas en backtesting: {list(backtesting_strategies.keys())}")
 
         # Cargar TODAS las estrategias activas en backtesting
         for strategy_name, is_active in backtesting_strategies.items():
             if not is_active:
-                logger.info(f"⏭️  {strategy_name} está desactivada en backtesting, omitiendo")
+                logger.info(f"⏭  {strategy_name} está desactivada en backtesting, omitiendo")
                 continue
 
-            logger.info(f"📦 Procesando estrategia: {strategy_name}")
+            logger.info(f" Procesando estrategia: {strategy_name}")
 
             # Verificar si hay configuración específica para live trading
             live_config = live_strategy_mapping.get(strategy_name, {})
 
             # Si no hay configuración específica, crear configuración por defecto
             if not live_config:
-                logger.info(f"⚙️  No hay configuración específica para {strategy_name}, creando configuración por defecto")
+                logger.info(f"  No hay configuración específica para {strategy_name}, creando configuración por defecto")
                 live_config = self._create_default_live_config(strategy_name)
 
             # Verificar si la estrategia está activa para live trading
             if not live_config.get('active', False):
-                logger.info(f"⏭️  {strategy_name} no está activa para live trading")
+                logger.info(f"⏭  {strategy_name} no está activa para live trading")
                 continue
 
             # Cargar la estrategia usando el path configurado
             if strategy_name in strategy_paths:
                 module_path, class_name = strategy_paths[strategy_name]
             else:
-                logger.warning(f"❌ No se encontró path para estrategia '{strategy_name}' en strategy_paths")
+                logger.warning(f" No se encontró path para estrategia '{strategy_name}' en strategy_paths")
                 continue
 
             try:
@@ -134,32 +141,42 @@ class LiveTradingOrchestrator:
                 # Obtener parámetros de configuración
                 strategy_params = live_config.get('parameters', {})
 
-                # Instanciar estrategia con parámetros
-                if strategy_params:
-                    self.strategy_instances[strategy_name] = strategy_class(**strategy_params)
-                    logger.info(f"✅ {strategy_name} cargada con parámetros: {list(strategy_params.keys())}")
+                # Filtrar parámetros para solo los que la estrategia acepta
+                # Las estrategias ML solo aceptan: config, initial_balance
+                # No pasar parámetros adicionales que la clase no espera
+                filtered_params = {}
+                if 'config' in strategy_params:
+                    filtered_params['config'] = strategy_params['config']
+                if 'initial_balance' in strategy_params:
+                    filtered_params['initial_balance'] = strategy_params['initial_balance']
+
+                # Instanciar estrategia con parámetros filtrados
+                if filtered_params:
+                    self.strategy_instances[strategy_name] = strategy_class(**filtered_params)
+                    logger.info(f" {strategy_name} cargada con parámetros: {list(filtered_params.keys())}")
                 else:
-                    self.strategy_instances[strategy_name] = strategy_class()
-                    logger.info(f"✅ {strategy_name} cargada con parámetros por defecto")
+                    # Instanciar sin parámetros - la estrategia usará defaults
+                    self.strategy_instances[strategy_name] = strategy_class(config=self.config)
+                    logger.info(f" {strategy_name} cargada sin parámetros adicionales")
 
                 # Guardar configuración de live trading para esta estrategia
                 self.strategy_live_configs[strategy_name] = live_config
 
             except (ImportError, AttributeError) as e:
-                logger.error(f"❌ Error cargando {strategy_name}: {str(e)}")
+                logger.error(f" Error cargando {strategy_name}: {str(e)}")
                 continue
 
         # Validar que se cargaron estrategias
         if not self.strategy_instances:
-            logger.error("❌ No se pudo cargar ninguna estrategia para live trading")
+            logger.error(" No se pudo cargar ninguna estrategia para live trading")
             return False
 
-        logger.info(f"🎯 Se cargaron {len(self.strategy_instances)} estrategias para live trading")
+        logger.info(f" Se cargaron {len(self.strategy_instances)} estrategias para live trading")
         for name in self.strategy_instances.keys():
             config = self.strategy_live_configs[name]
             symbols = config.get('symbols', [])
             timeframes = config.get('timeframes', [])
-            logger.info(f"   📊 {name}: {len(symbols)} símbolos, {len(timeframes)} timeframes")
+            logger.info(f"    {name}: {len(symbols)} símbolos, {len(timeframes)} timeframes")
 
         return True
     
@@ -173,18 +190,22 @@ class LiveTradingOrchestrator:
         Returns:
             Diccionario con configuración por defecto
         """
-        # Símbolos por defecto basados en el tipo de estrategia
-        if 'solana' in strategy_name.lower() or 'crypto' in strategy_name.lower():
-            default_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-            default_timeframes = ["4h", "1d"]
-        else:
-            # Forex por defecto
-            default_symbols = ["EURUSD", "USDJPY"]
-            default_timeframes = ["15m", "1h"]
+        # Usar símbolos de la configuración del backtesting
+        try:
+            if hasattr(self.config, 'backtesting') and hasattr(self.config.backtesting, 'symbols'):
+                default_symbols = self.config.backtesting.symbols
+                default_timeframes = [self.config.backtesting.timeframe] if hasattr(self.config.backtesting, 'timeframe') else ["15m"]
+            else:
+                # Fallback para Volatility 75 Index de Deriv
+                default_symbols = ["Volatility 75 Index"]
+                default_timeframes = ["15m"]
+        except:
+            # Fallback final
+            default_symbols = ["Volatility 75 Index"]
+            default_timeframes = ["15m"]
         
         # Parámetros por defecto
         default_params = {
-            'take_profit_percent': 3.0,
             'stop_loss_percent': 1.5
         }
         
@@ -202,7 +223,7 @@ class LiveTradingOrchestrator:
         Returns:
             True si la configuración es válida
         """
-        logger.info("🔍 Validando configuración de live trading...")
+        logger.info(" Validando configuración de live trading...")
         
         # Obtener símbolos disponibles
         mt5_symbols = self.live_config.get('mt5', {}).get('available_symbols', [])
@@ -214,7 +235,7 @@ class LiveTradingOrchestrator:
         ccxt_timeframes = self.live_config.get('ccxt', {}).get('available_timeframes', [])
         available_timeframes = list(set(mt5_timeframes + ccxt_timeframes))
         
-        logger.info(f"📊 Símbolos disponibles: {len(available_symbols)}")
+        logger.info(f" Símbolos disponibles en configuración: {len(available_symbols)}")
         logger.info(f"⏰ Timeframes disponibles: {available_timeframes}")
         
         # Validar cada estrategia cargada
@@ -222,23 +243,30 @@ class LiveTradingOrchestrator:
             symbols = live_config.get('symbols', [])
             timeframes = live_config.get('timeframes', [])
             
-            # Validar símbolos
-            invalid_symbols = [s for s in symbols if s not in available_symbols]
-            if invalid_symbols:
-                logger.error(f"❌ Estrategia {strategy_name}: símbolos inválidos {invalid_symbols}")
-                logger.error(f"   Símbolos disponibles: {available_symbols}")
-                return False
+            # Validar símbolos - si la lista global está vacía, permitir cualquier símbolo
+            # (MT5/CCXT harán la validación real al intentar conectar)
+            if available_symbols:
+                invalid_symbols = [s for s in symbols if s not in available_symbols]
+                if invalid_symbols:
+                    logger.error(f" Estrategia {strategy_name}: símbolos inválidos {invalid_symbols}")
+                    logger.error(f"   Símbolos disponibles: {available_symbols}")
+                    return False
+            else:
+                logger.info(f"ℹ  Sin lista de símbolos predefinida - Permitiendo: {symbols}")
             
-            # Validar timeframes
-            invalid_timeframes = [t for t in timeframes if t not in available_timeframes]
-            if invalid_timeframes:
-                logger.error(f"❌ Estrategia {strategy_name}: timeframes inválidos {invalid_timeframes}")
-                logger.error(f"   Timeframes disponibles: {available_timeframes}")
-                return False
+            # Validar timeframes - similar a símbolos, permitir si lista está vacía
+            if available_timeframes:
+                invalid_timeframes = [t for t in timeframes if t not in available_timeframes]
+                if invalid_timeframes:
+                    logger.error(f" Estrategia {strategy_name}: timeframes inválidos {invalid_timeframes}")
+                    logger.error(f"   Timeframes disponibles: {available_timeframes}")
+                    return False
+            else:
+                logger.info(f"ℹ  Sin lista de timeframes predefinida - Permitiendo: {timeframes}")
             
-            logger.info(f"✅ {strategy_name}: {len(symbols)} símbolos, {len(timeframes)} timeframes válidos")
+            logger.info(f" {strategy_name}: {len(symbols)} símbolos, {len(timeframes)} timeframes válidos")
         
-        logger.info("✅ Configuración de live trading validada correctamente")
+        logger.info(" Configuración de live trading validada correctamente")
         return True
     
     def start(self):
@@ -315,10 +343,12 @@ class LiveTradingOrchestrator:
         logger.info("Hilo de procesamiento de datos iniciado")
         
         cycle_count = 0
+        last_sync_time = datetime.now()
+        sync_interval_seconds = self.live_config.get('position_sync_interval_seconds', 60)
         
         while self.running:
             cycle_count += 1
-            logger.info(f"🚀 Iniciando ciclo #{cycle_count} - Sistema Modular Activo")
+            logger.info(f" Iniciando ciclo #{cycle_count} - Sistema Modular Activo")
             
             try:
                 # Procesar cada estrategia cargada con sus símbolos y timeframes específicos
@@ -327,23 +357,57 @@ class LiveTradingOrchestrator:
                     symbols = live_config.get('symbols', [])
                     timeframes = live_config.get('timeframes', [])
                     
-                    logger.info(f"🎯 Procesando {strategy_name}: {len(symbols)} símbolos, {len(timeframes)} timeframes")
+                    logger.info(f" Procesando {strategy_name}: {len(symbols)} símbolos, {len(timeframes)} timeframes")
                     
                     for symbol in symbols:
                         for timeframe in timeframes:
-                            logger.info(f"📊 {strategy_name} -> {symbol} {timeframe}")
+                            logger.info(f" {strategy_name} -> {symbol} {timeframe}")
                             
-                            # Obtener datos más recientes
-                            data = self.data_provider.get_current_data(symbol, timeframe)
+                            # Obtener datos más recientes - usando método optimizado para MT5
+                            # El sistema mantiene cache inteligente y solo actualiza barras nuevas
+                            data = self.data_provider.get_live_data_efficient(symbol, timeframe, bars=200)
                             
-                            if data is None or len(data) < 100:
-                                logger.warning(f"❌ Datos insuficientes para {symbol} {timeframe}: {len(data) if data is not None else 0} filas")
+                            if data is None or len(data) < 50:
+                                logger.warning(f" Datos insuficientes para {symbol} {timeframe}: {len(data) if data is not None else 0} filas")
                                 continue
                             
-                            logger.info(f"✅ Datos obtenidos: {len(data)} filas para {symbol} {timeframe}")
+                            logger.info(f" Datos obtenidos: {len(data)} filas para {symbol} {timeframe}")
                             
                             # Procesar con la estrategia específica
                             self._process_data_with_strategy(strategy_name, strategy, symbol, timeframe, data)
+                
+                # FASE 5 - SINCRONIZACIÓN: Sincronizar posiciones con exchange cada intervalo
+                current_time = datetime.now()
+                if (current_time - last_sync_time).total_seconds() >= sync_interval_seconds:
+                    logger.info(f" [SYNC] Sincronizando posiciones con exchange...")
+                    try:
+                        sync_result = self.position_synchronizer.sync_positions_with_exchange(
+                            local_positions=self.active_positions,
+                            strategy_configs=self.strategy_live_configs
+                        )
+                        
+                        if sync_result['status'] == 'success':
+                            logger.info(f" [SYNC] Sincronización completada: "
+                                      f"{sync_result['matched']} coincidencias, "
+                                      f"{sync_result['mismatches']} desajustes, "
+                                      f"{sync_result['external_closes']} cierres externos")
+                            
+                            # Actualizar active_positions si hay cambios
+                            if sync_result.get('updated_positions'):
+                                self.active_positions = sync_result['updated_positions']
+                            
+                            # Procesar cierres externos (SL/TP activados)
+                            if sync_result.get('external_closes'):
+                                for closed_order in sync_result['external_closes']:
+                                    logger.info(f"  [SYNC] Cierre externo detectado: {closed_order['symbol']}")
+                                    self._record_trade_closed(closed_order, {'symbol': closed_order['symbol'], 'strategy': 'EXTERNAL'})
+                        else:
+                            logger.warning(f"  [SYNC] Sincronización fallida: {sync_result.get('error', 'Error desconocido')}")
+                    
+                    except Exception as sync_error:
+                        logger.error(f" [SYNC] Error durante sincronización: {str(sync_error)}")
+                    
+                    last_sync_time = current_time
                 
                 # Actualizar métricas
                 self._update_metrics()
@@ -354,9 +418,9 @@ class LiveTradingOrchestrator:
                 time.sleep(self.live_config.get('update_interval_seconds', 5))
                 
             except Exception as e:
-                logger.error(f"❌ Error en el bucle de procesamiento de datos: {str(e)}")
+                logger.error(f" Error en el bucle de procesamiento de datos: {str(e)}")
                 import traceback
-                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                logger.error(f" Traceback: {traceback.format_exc()}")
                 time.sleep(10)  # Esperar y reintentar
         
         logger.info("Hilo de procesamiento de datos finalizado")
@@ -394,45 +458,65 @@ class LiveTradingOrchestrator:
             data: DataFrame con datos OHLCV
         """
         try:
-            logger.info(f"🎯 Ejecutando {strategy_name} para {symbol} {timeframe}")
+            logger.info(f" Ejecutando {strategy_name} para {symbol} {timeframe}")
             
-            # Ejecutar estrategia
-            result = strategy.run(data, symbol)
+            # Ejecutar estrategia - Para LIVE TRADING usar get_live_signal() en lugar de run()
+            # run() es para backtesting, get_live_signal() es para live trading
+            if hasattr(strategy, 'get_live_signal'):
+                # Método preferido para live trading
+                result = strategy.get_live_signal(data, symbol, timeframe)
+            else:
+                # Fallback a run() si no existe get_live_signal()
+                result = strategy.run(data, symbol)
             
-            if result and 'signals' in result and result['signals']:
-                # Obtener solo la última señal (más reciente)
-                latest_signal = result['signals'][-1]
+            # Procesar resultado de la estrategia
+            if result and 'signal' in result:
+                # Verificar si hay una señal válida
+                if result['signal'] in ('NO_SIGNAL', None):
+                    logger.info(f" {strategy_name} no generó señales para {symbol} {timeframe}")
+                    return
                 
-                logger.info(f"[SIGNAL] ✅ {strategy_name} generó señal: {latest_signal.get('action', 'UNKNOWN')} para {symbol}")
+                # Convertir el formato de la estrategia al formato esperado
+                latest_signal = {
+                    'action': result['signal'],
+                    'price': result['signal_data'].get('entry_price', 0),
+                    'stop_loss': result['signal_data'].get('stop_loss_price', 0),
+                    'take_profit': result['signal_data'].get('take_profit_price', 0),
+                    'direction': result['signal'].lower(),
+                    'symbol': symbol,
+                    'ml_confidence': result.get('ml_confidence', 0.5),
+                    'atr': result['signal_data'].get('atr', 0),
+                    'risk_per_trade': result['signal_data'].get('risk_per_trade', 0.02),
+                    'timestamp': result['signal_data'].get('timestamp')
+                }
+                
+                logger.info(f"[SIGNAL]  {strategy_name} generó señal: {latest_signal.get('action', 'UNKNOWN')} para {symbol}")
                 
                 # Aplicar gestión de riesgo si está habilitada
                 if self.live_config.get('apply_risk_management', True):
                     if not self._apply_risk_management_to_signal(latest_signal, symbol):
-                        logger.info(f"[RISK] ❌ Señal rechazada por gestión de riesgo: {symbol}")
+                        logger.info(f"[RISK]  Señal rechazada por gestión de riesgo: {symbol}")
                         return
                 
                 # Verificar límites de posiciones
                 if not self._check_position_limits(symbol):
-                    logger.info(f"[LIMIT] ❌ Límite de posiciones alcanzado para {symbol}")
+                    logger.info(f"[LIMIT]  Límite de posiciones alcanzado para {symbol}")
                     return
                 
-                # Enviar señal a la cola para procesamiento
-                signal_data = {
-                    'symbol': symbol,
-                    'timeframe': timeframe,
-                    'strategy': strategy_name,
-                    'signal': latest_signal,
-                    'timestamp': datetime.now(),
-                    'data': data.tail(1).to_dict('records')[0]
-                }
+                # Copiar position_size del risk management a signal_data para que esté disponible en ejecución
+                if 'position_size' in latest_signal:
+                    result['signal_data']['position_size'] = latest_signal['position_size']
+                    logger.info(f"[POSITION_SIZE] Añadido position_size={latest_signal['position_size']} a signal_data")
                 
-                self.signal_queue.put(signal_data)
-                logger.info(f"📤 Señal de {strategy_name} enviada a cola: {latest_signal['action']} {symbol}")
+                # El resultado ya está en el formato correcto para la cola, pero necesita 'data'
+                result['data'] = data.tail(1).to_dict('records')[0]
+                self.signal_queue.put(result)
+                logger.info(f" Señal de {strategy_name} enviada a cola: {latest_signal['action']} {symbol}")
             else:
-                logger.info(f"📭 {strategy_name} no generó señales para {symbol} {timeframe}")
+                logger.info(f" {strategy_name} no generó señales para {symbol} {timeframe}")
                 
         except Exception as e:
-            logger.error(f"❌ Error procesando {strategy_name} para {symbol} ({timeframe}): {str(e)}")
+            logger.error(f" Error procesando {strategy_name} para {symbol} ({timeframe}): {str(e)}")
     
     def _apply_risk_management_to_signal(self, signal: Dict[str, Any], symbol: str) -> bool:
         """
@@ -446,9 +530,16 @@ class LiveTradingOrchestrator:
             True si la señal pasa la gestión de riesgo
         """
         try:
-            # Obtener balance de cuenta
+            # Obtener balance/equity de cuenta ACTUAL
             account_info = self.data_provider.get_account_info()
-            account_balance = account_info.get('balance', 0.0)
+            
+            # Usar EQUITY (balance - pérdidas no realizadas) para más precisión en riesgo
+            # Equity es más conservador que Balance si hay operaciones con pérdidas abiertas
+            account_balance = account_info.get('equity', account_info.get('balance', 0.0))
+            balance = account_info.get('balance', 0.0)
+            equity = account_info.get('equity', balance)
+            
+            logger.info(f"💰 Información de cuenta (SYNC ACTUAL): Balance={balance:.2f} USD, Equity={equity:.2f} USD")
             
             # Configuración de riesgo
             risk_config = {
@@ -499,14 +590,27 @@ class LiveTradingOrchestrator:
         """
         Ejecuta una señal de trading enviando órdenes a MT5.
         Sistema completamente modular con validaciones avanzadas.
-        
+
         Args:
             signal_data: Diccionario con información de la señal
         """
+        logger.info(f"[DEBUG] Ejecutando señal con datos: {signal_data}")
+        logger.info(f"[DEBUG] Claves disponibles: {list(signal_data.keys()) if isinstance(signal_data, dict) else 'NO ES DICT'}")
+
         symbol = signal_data['symbol']
-        action = signal_data['signal']['action']
-        strategy_name = signal_data['strategy']
-        current_price = signal_data['data'].get('close', None)
+        
+        # Determinar el formato de la señal
+        if 'signal' in signal_data and isinstance(signal_data['signal'], str):
+            # Nuevo formato: 'signal' es string, 'signal_data' contiene detalles
+            action = signal_data['signal']
+            signal_details = signal_data.get('signal_data', {})
+        else:
+            # Formato antiguo: 'signal' es diccionario con 'action'
+            action = signal_data['signal']['action']
+            signal_details = signal_data['signal']
+        
+        strategy_name = signal_data.get('strategy_name', signal_data.get('strategy', 'Unknown'))
+        current_price = signal_data.get('data', {}).get('close', None)
         
         if not current_price:
             logger.error(f"Precio actual no disponible para {symbol}")
@@ -533,18 +637,23 @@ class LiveTradingOrchestrator:
                         logger.info(f"Ignorando señal BUY para {symbol}: ya existe posición LONG")
                         return
                 
-                # Calcular stop loss y take profit
-                stop_loss = signal_data['signal'].get('stop_loss', current_price * 0.95)
-                take_profit = signal_data['signal'].get('take_profit', current_price * 1.1)
+                # Usar stop loss y take profit calculados por la estrategia
+                stop_loss = signal_details.get('stop_loss', current_price * 0.95)
+                take_profit = signal_details.get('take_profit', current_price * 1.1)
+                risk_per_trade = signal_details.get('risk_per_trade', 0.02)
+                # USAR position_size del risk management (ya está calculado correctamente)
+                position_size = signal_details.get('position_size', None)
                 
-                # Abrir posición larga
+                logger.info(f"📊 BUY: Position size recibido del risk management: {position_size}")
+                
+                # Abrir posición larga - usar position_size calculado por risk management
                 result = self.order_executor.open_position(
                     symbol=symbol,
-                    order_type='BUY',
-                    volume=signal_data['signal'].get('volume', None),  # Volumen automático si es None
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    comment=f"LiveTrading-{strategy_name}"
+                    order_type=OrderType.BUY,
+                    quantity=position_size,  # USAR position_size calculado por risk management
+                    stop_loss_price=stop_loss,
+                    take_profit_price=take_profit,
+                    risk_per_trade=risk_per_trade
                 )
                 
                 if result['success']:
@@ -565,18 +674,23 @@ class LiveTradingOrchestrator:
                         logger.info(f"Ignorando señal SELL para {symbol}: ya existe posición SHORT")
                         return
                 
-                # Calcular stop loss y take profit
-                stop_loss = signal_data['signal'].get('stop_loss', current_price * 1.05)
-                take_profit = signal_data['signal'].get('take_profit', current_price * 0.9)
+                # Usar stop loss y take profit calculados por la estrategia
+                stop_loss = signal_details.get('stop_loss', current_price * 1.05)
+                take_profit = signal_details.get('take_profit', current_price * 0.9)
+                risk_per_trade = signal_details.get('risk_per_trade', 0.02)
+                # USAR position_size del risk management (ya está calculado correctamente)
+                position_size = signal_details.get('position_size', None)
                 
-                # Abrir posición corta
+                logger.info(f"📊 SELL: Position size recibido del risk management: {position_size}")
+                
+                # Abrir posición corta - usar position_size calculado por risk management
                 result = self.order_executor.open_position(
                     symbol=symbol,
-                    order_type='SELL',
-                    volume=signal_data['signal'].get('volume', None),  # Volumen automático si es None
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    comment=f"LiveTrading-{strategy_name}"
+                    order_type=OrderType.SELL,
+                    quantity=position_size,  # USAR position_size calculado por risk management
+                    stop_loss_price=stop_loss,
+                    take_profit_price=take_profit,
+                    risk_per_trade=risk_per_trade
                 )
                 
                 if result['success']:

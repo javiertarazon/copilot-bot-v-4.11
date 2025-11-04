@@ -1,0 +1,35 @@
+================================================================================
+🧹 DEPURACIÓN DE CARPETA /utils - COMPLETADA
+================================================================================
+
+RESULTADO:
+  41 módulos Python → 23 módulos esenciales (43.9% de reducción)
+
+MÓDULOS MANTENIDOS (23):
+  Storage: storage, market_data_validator
+  ML: talib_wrapper, indicator_cache
+  Trading: order_persistence, pnl_calculator, position_synchronizer
+  Live: live_trading_tracker, live_trading_data_reader
+  Risk: graceful_shutdown
+  Logging: logger, logger_metrics, signal_logger, alert_manager
+  Validation: backtest_validator, trace_comparator
+  Brokers: ccxt_manager
+  Utils: retry_manager, normalization, market_sessions, monitoring, resilience
+  Other: stop_loss_calculator
+
+MÓDULOS ELIMINADOS (18):
+  ✅ Archivados en: utils/BACKUP_UNUSED_20251102_1556/
+  • consolidation_validator, divergence_analyzer, enhanced_cache, etc.
+  • check_binance_balance, check_bybit_balance, verify_credentials
+  • dashboard, dashboard_old_backup, dashboard_quick
+  • convert_btc_to_usdt, order_executor_integration, threshold_adjuster
+
+DOCUMENTACIÓN:
+  📚 README_UTILS.md - Guía completa (23 módulos documentados)
+
+MÓDULOS CRÍTICOS:
+  ⭐⭐⭐⭐⭐ logger (38 importaciones)
+  ⭐⭐⭐⭐ storage (12 importaciones)
+  ⭐⭐⭐ graceful_shutdown, resilience
+
+Status: 🟢 LISTO PARA PRODUCCIÓN

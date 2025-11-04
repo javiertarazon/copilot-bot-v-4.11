@@ -32,7 +32,7 @@ def audit_database():
     print('🔍 AUDITORÍA DE BASE DE DATOS')
     print('=' * 50)
 
-    data_dir = Path('data')
+    data_dir = Path(__file__).parent.parent / 'data'
     db_path = data_dir / 'data.db'
 
     if db_path.exists():

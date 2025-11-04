@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+CHECKLIST DE IMPLEMENTACIÓN - Discrepancias de Trading
+
+Guía paso a paso para implementar los 4 fixes críticos.
+Archivo de referencia rápida durante desarrollo.
+
+Fecha: 26 Octubre 2025
+"""
+
+CHECKLIST_IMPLEMENTACION = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║          CHECKLIST DE IMPLEMENTACIÓN - FIXES CRÍTICOS                        ║
+║                                                                              ║
+║  Proyecto: Bot Trader Copilot - CCXT Live Trading                           ║
+║  Fecha: 26 Octubre 2025                                                     ║
+║  Estado: 🔴 CRÍTICO - Requiere implementación inmediata                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════
+FASE 1: CRÍTICA - Implementar HOY (4-6 horas estimadas)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FIX #1: SINCRONIZACIÓN CON BINANCE (1-2 horas)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ARCHIVO: ccxt_live_trading_orchestrator.py                                 │
+│ MÉTODO NUEVO: sync_positions_with_exchange()                              │
+│ LÍNEAS: ~850 (antes de _manage_open_positions)                            │
+│                                                                             │
+│ PASOS:                                                                      │
+│ ☐ 1. Crear método sync_positions_with_exchange()                          │
+│ ☐ 2. Copiar código completo de SOLUCIONES_DISCREPANCIAS.md               │
+│ ☐ 3. Integrar en _manage_open_positions() - Primera línea                │
+│ ☐ 4. Probar con sync_positions_auditor.py                                │
+│ ☐ 5. Validar que 0 posiciones fantasma detectadas                        │
+│                                                                             │
+│ VALIDACIÓN:                                                                │
+│   ✓ Auditoría: 0 órdenes abiertas sin rastrear                          │
+│   ✓ Auditoría: 0 discrepancias encontradas                              │
+│   ✓ Logs: "Sincronización completada" cada 30s                          │
+│                                                                             │
+│ SEVERIDAD: 🔴 CRÍTICA                                                     │
+│ IMPACTO: Elimina 9 posiciones cortas involuntarias                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FIX #2: CORREGIR TRAILING STOP (30 minutos)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ARCHIVO: ccxt_live_trading_orchestrator.py                                 │
+│ MÉTODO: _update_trailing_stop() - REEMPLAZO                              │
+│ LÍNEAS: 734-800 (REEMPLAZAR COMPLETAMENTE)                               │
+│                                                                             │
+│ PASOS:                                                                      │
+│ ☐ 1. Hacer backup: Copiar líneas 734-800 a un archivo .bak              │
+│ ☐ 2. Reemplazar completamente con código de SOLUCIONES_DISCREPANCIAS.md │
+│ ☐ 3. Verificar indentación correcta (4 espacios)                        │
+│ ☐ 4. Probar: Ejecutar backtest rápido                                   │
+│ ☐ 5. Validar: Logs muestren "TRAILING STOP ACTUALIZADO"                │
+│                                                                             │
+│ VALIDACIÓN:                                                                │
+│   ✓ Compile: python -m py_compile ccxt_live_trading_orchestrator.py    │
+│   ✓ Logs: Mostrar updates de trailing stop cada candle                  │
+│   ✓ Test: test_quick_backtest.py debe pasar                            │
+│                                                                             │
+│ SEVERIDAD: 🔴 CRÍTICA                                                     │
+│ IMPACTO: Trailing stops protegen ganancias correctamente                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FIX #3: CIERRE SEGURO DE POSICIONES (1 hora)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ARCHIVO: ccxt_order_executor.py                                           │
+│ MÉTODO NUEVO: close_position_safe()                                       │
+│ UBICACIÓN: Después de close_position() ~línea 620                         │
+│                                                                             │
+│ PASOS:                                                                      │
+│ ☐ 1. Crear nuevo método close_position_safe()                            │
+│ ☐ 2. Copiar código de SOLUCIONES_DISCREPANCIAS.md                       │
+│ ☐ 3. Reemplazar llamadas: close_position() → close_position_safe()      │
+│    - En _manage_open_positions()                                         │
+│    - En _handle_strategy_signal()                                        │
+│ ☐ 4. Probar cierre con posición existente                               │
+│ ☐ 5. Validar que no intenta cerrar dos veces                            │
+│                                                                             │
+│ BÚSQUEDAS (para reemplazar):                                              │
+│   - "self.order_executor.close_position"                                │
+│   - "order_executor.close_position"                                      │
+│   - "close_position(" (sin _safe)                                        │
+│                                                                             │
+│ VALIDACIÓN:                                                                │
+│   ✓ Compile: python -m py_compile ccxt_order_executor.py               │
+│   ✓ Logs: No hay "intenta cerrar posición ya cerrada"                  │
+│   ✓ Auditoría: No hay órdenes SELL sin BUY                            │
+│                                                                             │
+│ SEVERIDAD: 🔴 CRÍTICA                                                     │
+│ IMPACTO: Elimina órdenes conflictivas y posiciones fantasma              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FIX #4: P&L CON COMISIONES (30 minutos)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ARCHIVO: ccxt_order_executor.py                                           │
+│ MÉTODOS NUEVOS:                                                            │
+│   - _calculate_pnl_with_fees()                                           │
+│   - _calculate_unrealized_pnl()                                          │
+│ UBICACIÓN: Después de _calculate_pnl() ~línea 580                        │
+│                                                                             │
+│ PASOS:                                                                      │
+│ ☐ 1. Crear _calculate_pnl_with_fees()                                    │
+│ ☐ 2. Crear _calculate_unrealized_pnl()                                   │
+│ ☐ 3. Copiar código de SOLUCIONES_DISCREPANCIAS.md                       │
+│ ☐ 4. Integrar en LiveTradingTracker                                      │
+│ ☐ 5. Actualizar cálculo de balance inicial                              │
+│ ☐ 6. Ejecutar analizar_pnl_detallado.py                                 │
+│ ☐ 7. Validar balance inicial vs balance actual                          │
+│                                                                             │
+│ VALIDACIÓN:                                                                │
+│   ✓ Compile: python -m py_compile ccxt_order_executor.py               │
+│   ✓ Script: analizar_pnl_detallado.py muestra comisiones               │
+│   ✓ Balance: Inicial - PNL = Actual (con tolerancia ±$2)               │
+│                                                                             │
+│ SEVERIDAD: 🟠 ALTA                                                        │
+│ IMPACTO: P&L realista incluyendo costos de transacción                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+VALIDACIÓN DESPUÉS DE FASE 1
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ AUDITORÍA ─────────────────────────────────────────────────────────────────┐
+│ Ejecutar:                                                                   │
+│   python descarga_datos/tests/sync_positions_auditor.py                   │
+│                                                                             │
+│ Resultados esperados:                                                       │
+│   ✓ Órdenes abiertas: 0                                                   │
+│   ✓ Discrepancias: 0                                                       │
+│   ✓ Posiciones fantasma: Ninguna                                          │
+│   ✓ Balance verificado: $1,757.61 USDT                                   │
+│                                                                             │
+│ ⚠️  Si hay discrepancias: DEBUG antes de continuar                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ BACKTESTING RÁPIDO ────────────────────────────────────────────────────────┐
+│ Ejecutar:                                                                   │
+│   python -m pytest descarga_datos/tests/test_quick_backtest.py -v        │
+│                                                                             │
+│ Resultados esperados:                                                       │
+│   ✓ Todas las pruebas pasen                                              │
+│   ✓ Sin errores de importación                                           │
+│   ✓ Sin errores de atributo                                              │
+│                                                                             │
+│ ⚠️  Si hay fallos: Revisar backlog, verificar cambios                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ VERIFICACIÓN DE LOGS ──────────────────────────────────────────────────────┐
+│ Buscar en logs:                                                             │
+│   ✓ "Sincronización completada"                                          │
+│   ✓ "TRAILING STOP ACTUALIZADO"                                         │
+│   ✓ "Posición cerrada exitosamente"                                     │
+│   ✓ No debe haber: "intenta cerrar posición ya cerrada"                 │
+│   ✓ No debe haber: "Posición no encontrada en Binance"                  │
+│                                                                             │
+│ Comando para verificar:                                                    │
+│   grep -i "error" descarga_datos/logs/live_*.log                        │
+│   (Debe retornar línea vacía o errores esperados)                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+FASE 2: IMPORTANTE - Esta Semana (2-3 horas estimadas)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ MEJORAS ADICIONALES ───────────────────────────────────────────────────────┐
+│ ☐ Agregar alertas automáticas de desincronización                         │
+│ ☐ Crear script de monitoreo de posiciones fantasma                       │
+│ ☐ Implementar reintentos automáticos de sincronización                   │
+│ ☐ Agregar metricas de "posiciones tracked vs reales"                     │
+│ ☐ Dashboard con estado de sincronización en tiempo real                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+FASE 3: FUTURO - Próximas Semanas (Investigación)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ESTUDIO DE FREQTRADE ──────────────────────────────────────────────────────┐
+│ ☐ Clonar: git clone https://github.com/freqtrade/freqtrade.git           │
+│ ☐ Estudiar: /freqtrade/exchange/ (order management)                      │
+│ ☐ Estudiar: /freqtrade/wallets/ (position tracking)                      │
+│ ☐ Copiar: validate_order() función                                       │
+│ ☐ Copiar: fee calculation logic                                          │
+│ ☐ Integrar patrones a tu código                                          │
+│                                                                             │
+│ Referencia: REFERENCIAS_BOTS_ALTERNATIVOS_CCXT.md                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+GUÍA RÁPIDA DE ARCHIVOS
+═══════════════════════════════════════════════════════════════════════════════
+
+DOCUMENTACIÓN:
+  📄 RESUMEN_EJECUTIVO_DISCREPANCIAS.md        ← LEER PRIMERO (10 min)
+  📄 ANALISIS_DISCREPANCIAS_LOGS_VS_REALES.md  ← Análisis técnico (45 min)
+  📄 SOLUCIONES_DISCREPANCIAS.md               ← Código correcto (1-2h)
+  📄 REFERENCIAS_BOTS_ALTERNATIVOS_CCXT.md     ← Investigación (30 min)
+  📄 INDICE_COMPLETO_DISCREPANCIAS.md          ← Este índice (5 min)
+
+SCRIPTS:
+  🐍 tests/sync_positions_auditor.py           ← Auditoría de sincronización
+  🐍 tests/interactive_diagnostics.py          ← Herramienta interactiva
+  🐍 tests/analizar_pnl_detallado.py          ← Análisis de P&L
+
+ARCHIVOS A MODIFICAR:
+  📝 core/ccxt_live_trading_orchestrator.py    ← Fixes #1, #2
+  📝 core/ccxt_order_executor.py               ← Fixes #3, #4
+
+═══════════════════════════════════════════════════════════════════════════════
+ESTIMACIONES DE TIEMPO
+═══════════════════════════════════════════════════════════════════════════════
+
+Lectura de Documentación:
+  Mínimo (RESUMEN): 10 minutos
+  Recomendado: 1-2 horas
+  Completo: 3-4 horas
+
+Implementación de Fixes:
+  Fix #1 (Sincronización): 1-2 horas
+  Fix #2 (Trailing Stop): 30 minutos
+  Fix #3 (Cierre Seguro): 1 hora
+  Fix #4 (P&L Comisiones): 30 minutos
+  ────────────────────────
+  TOTAL FASE 1: 4-6 horas
+
+Testing y Validación:
+  Auditoría: 15 minutos
+  Backtest: 15 minutos
+  Logs Review: 15 minutos
+  ────────────────────────
+  TOTAL: 45 minutos
+
+Fase 2 (Mejoras): 2-3 horas (durante la semana)
+Fase 3 (Investigación): 3-5 horas (próximas semanas)
+
+═══════════════════════════════════════════════════════════════════════════════
+NOTAS IMPORTANTES
+═══════════════════════════════════════════════════════════════════════════════
+
+⚠️  ANTES DE EMPEZAR:
+  1. HACE BACKUP de archivos modificables
+  2. Trabaja en rama de feature: git checkout -b fix/discrepancias
+  3. Prueba primero en testnet (ya está configurado)
+  4. Valida con scripts de auditoría después de cada fix
+
+📝 DURANTE LA IMPLEMENTACIÓN:
+  1. Sigue orden: Fix #1 → #2 → #3 → #4
+  2. Valida después de cada fix con auditoría
+  3. Mantén logs detallados
+  4. Documenta cambios en git commit
+
+✅ DESPUÉS DE COMPLETAR:
+  1. Ejecutar auditoría completa
+  2. Validar con backtest rápido
+  3. Revisar logs sin errores
+  4. Commit con mensaje descriptivo
+  5. Merge a master cuando esté aprobado
+
+═══════════════════════════════════════════════════════════════════════════════
+CHECKLIST FINAL
+═══════════════════════════════════════════════════════════════════════════════
+
+PREPARACIÓN:
+  ☐ Leer RESUMEN_EJECUTIVO_DISCREPANCIAS.md
+  ☐ Leer SOLUCIONES_DISCREPANCIAS.md
+  ☐ Hacer backup de código
+  ☐ Crear rama de git: fix/discrepancias
+
+IMPLEMENTACIÓN:
+  ☐ Fix #1: Sincronización (1-2h)
+  ☐ Validar #1 con auditoría
+  ☐ Fix #2: Trailing Stop (30m)
+  ☐ Validar #2 con backtest
+  ☐ Fix #3: Cierre Seguro (1h)
+  ☐ Validar #3 con auditoría
+  ☐ Fix #4: P&L Comisiones (30m)
+  ☐ Validar #4 con auditoría
+
+TESTING:
+  ☐ sync_positions_auditor.py → 0 discrepancias
+  ☐ test_quick_backtest.py → Todas las pruebas pasan
+  ☐ Revisar logs → Sin errores críticos
+  ☐ Analizar balance inicial vs actual → Coincide
+
+FINALIZACIÓN:
+  ☐ Git commit con mensaje descriptivo
+  ☐ Crear PR/MR para revisión
+  ☐ Merge cuando esté aprobado
+  ☐ Deploy a testnet
+  ☐ Monitoreo por 24 horas
+
+═══════════════════════════════════════════════════════════════════════════════
+
+PRÓXIMOS PASOS:
+  1. Leer RESUMEN_EJECUTIVO_DISCREPANCIAS.md (ahora, 10 min)
+  2. Ejecutar sync_positions_auditor.py (10 min)
+  3. Leer SOLUCIONES_DISCREPANCIAS.md (1-2 horas)
+  4. Comenzar Fix #1 (Sincronización) - Hoy
+
+SOPORTE:
+  - Preguntas técnicas: Ver SOLUCIONES_DISCREPANCIAS.md
+  - Dudas de arquitectura: Ver REFERENCIAS_BOTS_ALTERNATIVOS_CCXT.md
+  - Herramienta de diagnóstico: python tests/interactive_diagnostics.py
+
+═══════════════════════════════════════════════════════════════════════════════
+FECHA: 26 Octubre 2025
+ESTADO: ✅ LISTO PARA IMPLEMENTACIÓN
+═══════════════════════════════════════════════════════════════════════════════
+"""
+
+def main():
+    """Imprime el checklist"""
+    print(CHECKLIST_IMPLEMENTACION)
+
+if __name__ == "__main__":
+    main()

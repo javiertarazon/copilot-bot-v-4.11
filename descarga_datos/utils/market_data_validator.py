@@ -19,16 +19,19 @@ class MarketDataValidator:
     Implementa métodos estadísticos para detectar datos sintéticos.
     """
     
-    def __init__(self, db_path: str = "descarga_datos/data/data.db"):
+    def __init__(self, db_path: str = None):
         """
         Inicializa el validador con la conexión a la base de datos.
         
         Args:
-            db_path: Ruta a la base de datos SQLite
+            db_path: Ruta a la base de datos SQLite (default: descarga_datos/data/data.db)
         """
         import os
-        # Normalizar ruta: si comienza con "data/", cambiar a descarga_datos/data/
-        if db_path.startswith("data/"):
+        from pathlib import Path
+        # Usar ruta relativa correcta si no se proporciona
+        if db_path is None:
+            db_path = str(Path(__file__).parent.parent / "data" / "data.db")
+        elif db_path.startswith("data/"):
             db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), db_path)
         self.db_path = db_path
         self._init_audit_table()

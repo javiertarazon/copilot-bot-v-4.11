@@ -512,11 +512,9 @@ class AdvancedDataDownloader:
         # Detectar fuente primaria
         is_crypto = self._is_crypto_symbol(symbol)
         primary_source = 'ccxt' if is_crypto else 'mt5'
-        fallback_source = 'mt5' if primary_source == 'ccxt' else 'ccxt'
-        
-        self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallback={fallback_source}")
-        
-        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
+        fallback_sources = ['okx', 'kraken', 'kucoin'] if primary_source == 'ccxt' else ['mt5']
+
+        self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallbacks={fallback_sources}")        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
         for attempt in range(self.max_retries):
             try:
                 if primary_source == 'ccxt':
@@ -957,7 +955,7 @@ class AdvancedDataDownloader:
                 df_for_sqlite = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
                 
                 # Guardar en SQLite (SOLO datos crudos OHLCV)
-                table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+                table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{timeframe}"
                 success_sql = self.storage.save_to_sqlite(df_for_sqlite, table_name)
 
                 # Metadata básica (coverage session-aware)
@@ -1082,7 +1080,7 @@ class AdvancedDataDownloader:
             DataFrame con datos o None
         """
         try:
-            table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+            table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{timeframe}"
             if not self.storage.table_exists(table_name):
                 return None
 
@@ -1382,7 +1380,7 @@ def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_da
 
         # Usar un enfoque más simple: intentar obtener datos de la DB primero
         # sin inicializar exchanges complejos que pueden causar problemas
-        table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+        table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{timeframe}"
 
         if downloader.storage.table_exists(table_name):
             # Convertir fechas a timestamps

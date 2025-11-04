@@ -72,12 +72,12 @@ class MLModelManager:
         Preparar features EXACTAMENTE IGUAL que en el entrenamiento ML
         CRÍTICO: Debe coincidir con MLTrainer.prepare_features() para evitar mismatch
         """
-        # 🎯 COPIA EXACTA de MLTrainer.prepare_features() - NO MODIFICAR
+        #  COPIA EXACTA de MLTrainer.prepare_features() - NO MODIFICAR
         from indicators.technical_indicators import TechnicalIndicators
         
         # Usar la configuración ya cargada en el objeto, no recargar
-        # config = load_config_from_yaml()  # ❌ PROBLEMÁTICO en optimización paralela
-        config = self.config  # ✅ Usar config ya cargada
+        # config = load_config_from_yaml()  #  PROBLEMÁTICO en optimización paralela
+        config = self.config  #  Usar config ya cargada
         
         indicator = TechnicalIndicators(config)
         df = data.copy()  # Trabajar con copia para no modificar original
@@ -191,7 +191,7 @@ class MLModelManager:
             print(f"[WARNING] Datos insuficientes para {symbol}: {len(features)} muestras (mínimo 100)")
             return {}
 
-        print(f"✅ Datos preparados: {len(features)} muestras válidas")
+        print(f" Datos preparados: {len(features)} muestras válidas")
 
         # Split de datos
         X_train, X_test, y_train, y_test = train_test_split(
@@ -356,7 +356,7 @@ class MLModelManager:
                 raise ValueError("Scaler not fitted - debe estar guardado junto con el modelo entrenado")
             features_scaled = scaler.transform(features)
         except Exception as e:
-            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
+            #  DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
             print(f"ERROR CRÍTICO: Scaler no válido ({e}). Devolviendo confianza neutral (0.5)")
             # Fallback seguro: devolver confianza neutral sin data leakage
             confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
@@ -368,7 +368,7 @@ class MLModelManager:
         actual_features = features_scaled.shape[1]
         if actual_features != expected_features:
             print(f"CRITICAL: Features mismatch - esperado {expected_features}, obtenido {actual_features}")
-            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
+            #  DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
             print("ERROR CRÍTICO: Mismatch de features. Devolviendo confianza neutral (0.5)")
             # Fallback seguro: devolver confianza neutral sin data leakage
             confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
@@ -442,67 +442,92 @@ class UltraDetailedHeikinAshiMLStrategy:
     """
 
     def __init__(self, config=None, initial_balance=None):
-        # Manejar tanto objetos Config como diccionarios
-        if config is None:
-            self.config = {}
-        elif hasattr(config, 'backtesting'):
-            # Es un objeto Config - extraer parámetros relevantes
-            self.config = {
-                'symbol': getattr(config.backtesting, 'symbols', ['BTC/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'BTC/USDT',
-                'timeframe': getattr(config.backtesting, 'timeframe', '4h') if hasattr(config.backtesting, 'timeframe') else '4h',
-                'ml_threshold': 0.58,  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
-                'ml_threshold_min': 0.4,  # Rango mínimo de confiabilidad ML
-                'ml_threshold_max': 0.75,  # Rango máximo de confiabilidad ML
-                'stoch_overbought': 85,
-                'stoch_oversold': 35,
-                'cci_threshold': 170,
-                'volume_ratio_min': 0.3,
-                'liquidity_score_min': 5,
-                'max_drawdown': 0.12,
-                'max_portfolio_heat': 0.18,
-                'max_concurrent_trades': 4,
-                'kelly_fraction': 0.35
-            }
-        else:
-            # Es un diccionario
-            self.config = config
+        # Inicializar logger INMEDIATAMENTE como fallback
+        try:
+            from utils.logger import get_logger
+            self.logger = get_logger('ultra_detailed_heikin_ashi_ml_strategy')
+        except:
+            # Fallback si el logger falla
+            import logging
+            self.logger = logging.getLogger('ultra_detailed_heikin_ashi_ml_strategy')
+        
+        try:
+            # Manejar tanto objetos Config como diccionarios
+            if config is None:
+                self.config = {}
+            elif hasattr(config, 'backtesting'):
+                # Es un objeto Config - obtener símbolo y usar helper para parámetros
+                symbol = getattr(config.backtesting, 'symbols', ['BTC/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'BTC/USDT'
+                timeframe = getattr(config.backtesting, 'timeframe', '4h') if hasattr(config.backtesting, 'timeframe') else '4h'
+                
+                #  USAR HELPER PARA OBTENER PARÁMETROS BASE + OPTIMIZADOS
+                try:
+                    from config.config_loader import get_strategy_parameters
+                    params = get_strategy_parameters(config, symbol)
+                    self.config = {
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        **params  # Desempaquetar todos los parámetros (base + optimizados)
+                    }
+                except Exception as e:
+                    # Fallback si no funciona el helper
+                    self.logger.warning(f"No se pudo cargar parámetros from helper: {e}")
+                    self.config = {
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'ml_threshold': 0.58,
+                        'ml_threshold_min': 0.4,
+                        'ml_threshold_max': 0.75,
+                        'stoch_overbought': 85,
+                        'stoch_oversold': 35,
+                        'cci_threshold': 170,
+                        'volume_ratio_min': 0.3,
+                        'liquidity_score_min': 5,
+                        'max_drawdown': 0.12,
+                        'max_portfolio_heat': 0.18,
+                        'max_concurrent_trades': 4,
+                        'kelly_fraction': 0.35
+                    }
+            else:
+                # Es un diccionario
+                self.config = config
 
-        # Extraer parámetros con valores por defecto
-        self.symbol = self.config.get('symbol', 'BTC/USDT')
-        self.timeframe = self.config.get('timeframe', '4h')
+            # Extraer parámetros con valores por defecto
+            self.symbol = self.config.get('symbol', 'BTC/USDT')
+            self.timeframe = self.config.get('timeframe', '4h')
 
-        # Parámetros optimizados desde configuración centralizada
-        self.ml_threshold = self.config.get('ml_threshold', 0.58)  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
-        self.ml_threshold_min = self.config.get('ml_threshold_min', 0.3)  # TEMPORAL: Bajado a 0.3 para testing
-        self.ml_threshold_max = self.config.get('ml_threshold_max', 0.75)  # Máximo rango de confiabilidad ML
-        self.stoch_overbought = self.config.get('stoch_overbought', 85)
-        self.stoch_oversold = self.config.get('stoch_oversold', 35)
-        self.cci_threshold = self.config.get('cci_threshold', 170)
-        self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)
-        self.liquidity_score_min = self.config.get('liquidity_score_min', 5)
+            # Parámetros optimizados desde configuración centralizada
+            self.ml_threshold = self.config.get('ml_threshold', 0.58)  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
+            self.ml_threshold_min = self.config.get('ml_threshold_min', 0.3)  # TEMPORAL: Bajado a 0.3 para testing
+            self.ml_threshold_max = self.config.get('ml_threshold_max', 0.75)  # Máximo rango de confiabilidad ML
+            self.stoch_overbought = self.config.get('stoch_overbought', 85)
+            self.stoch_oversold = self.config.get('stoch_oversold', 35)
+            self.cci_threshold = self.config.get('cci_threshold', 170)
+            self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)
+            self.liquidity_score_min = self.config.get('liquidity_score_min', 5)
 
-        # Cargar parámetros específicos del símbolo desde configuración centralizada
-        self._load_symbol_specific_params(config)
+            # Cargar parámetros específicos del símbolo desde configuración centralizada
+            self._load_symbol_specific_params(config)
 
-        # Gestión de riesgo avanzada OPTIMIZADA
-        self.max_drawdown = self.config.get('max_drawdown', 0.05)
-        self.max_portfolio_heat = self.config.get('max_portfolio_heat', 0.06)  # Aumentado a 6%
-        self.max_concurrent_trades = self.config.get('max_concurrent_trades', 3)  # Más oportunidades
-        self.kelly_fraction = self.config.get('kelly_fraction', 0.3)  # Más conservador
-        self.trailing_stop_pct = 0.65  # TRAILING STOP AJUSTADO A 65% PARA MAYOR CONSERVACIÓN DE GANANCIAS
+            # Gestión de riesgo avanzada OPTIMIZADA
+            self.max_drawdown = self.config.get('max_drawdown', 0.05)
+            self.max_portfolio_heat = self.config.get('max_portfolio_heat', 0.06)  # Aumentado a 6%
+            self.max_concurrent_trades = self.config.get('max_concurrent_trades', 3)  # Más oportunidades
+            self.kelly_fraction = self.config.get('kelly_fraction', 0.3)  # Más conservador
+            self.trailing_stop_pct = 0.65  # TRAILING STOP AJUSTADO A 65% PARA MAYOR CONSERVACIÓN DE GANANCIAS
 
-        # Estado interno
-        self.active_trades = []
-        # Usar balance inicial proporcionado o valor por defecto para backtesting
-        self.portfolio_value = initial_balance if initial_balance is not None else 10000.0
-        self.current_drawdown = 0.0
+            # Estado interno
+            self.active_trades = []
+            # Usar balance inicial proporcionado o valor por defecto para backtesting
+            self.portfolio_value = initial_balance if initial_balance is not None else 10000.0
+            self.current_drawdown = 0.0
 
-        # Inicializar gestor de modelos ML
-        self.ml_manager = MLModelManager(config=self.config)
+            # Inicializar gestor de modelos ML
+            self.ml_manager = MLModelManager(config=self.config)
 
-        # Inicializar logger
-        from utils.logger import get_logger
-        self.logger = get_logger('ultra_detailed_heikin_ashi_ml_strategy')
+        except Exception as e:
+            self.logger.error(f"Error en init de UltraDetailedHeikinAshiMLStrategy: {e}", exc_info=True)
+            raise
 
     def _load_symbol_specific_params(self, config, live_symbol=None):
         """
@@ -548,20 +573,40 @@ class UltraDetailedHeikinAshiMLStrategy:
             backtesting_config = config.backtesting
             if hasattr(backtesting_config, 'optimized_parameters') and backtesting_config.optimized_parameters:
                 opt_params = backtesting_config.optimized_parameters
+
+                # PRIMERO: Buscar parámetros BASE (no específicos por símbolo)
+                if isinstance(opt_params, dict):
+                    # Buscar sección 'base' o 'default' para parámetros universales
+                    if 'base' in opt_params:
+                        symbol_params = opt_params['base'].copy()
+                        self.logger.info(f"Usando parámetros BASE para {current_symbol}")
+                    elif 'default' in opt_params:
+                        symbol_params = opt_params['default'].copy()
+                        self.logger.info(f"Usando parámetros DEFAULT para {current_symbol}")
+                    else:
+                        # Si no hay parámetros base, usar los primeros disponibles como base
+                        first_key = next(iter(opt_params.keys()))
+                        if isinstance(opt_params[first_key], dict):
+                            symbol_params = opt_params[first_key].copy()
+                            self.logger.info(f"Usando parámetros de {first_key} como BASE para {current_symbol}")
+
+                # SEGUNDO: Si hay parámetros específicos del símbolo, sobreescribir solo algunos (opcional)
                 # Convertir símbolo a clave de parámetros (BTC/USDT -> BTC_USDT)
                 symbol_key = current_symbol.replace('/', '_')
-
-                # Buscar parámetros específicos del símbolo
-                if isinstance(opt_params, dict) and symbol_key in opt_params:
-                    # Los parámetros están en optimized_parameters.BTC_USDT
+                if isinstance(opt_params, dict) and symbol_key in opt_params and symbol_key != 'base' and symbol_key != 'default':
+                    # Solo sobreescribir parámetros específicos si existen y son diferentes
                     symbol_opt_params = opt_params[symbol_key]
                     if isinstance(symbol_opt_params, dict):
-                        # Ya es un diccionario - copiar todos los parámetros
-                        symbol_params = symbol_opt_params.copy()
+                        # Sobreescribir solo parámetros que están específicamente optimizados para este símbolo
+                        for param_key, param_value in symbol_opt_params.items():
+                            if param_value is not None:
+                                symbol_params[param_key] = param_value
+                                self.logger.debug(f"Parámetro {param_key} sobreescrito para {current_symbol}: {param_value}")
+                        self.logger.info(f"Parámetros específicos aplicados para {current_symbol}")
                     else:
                         # Intentar acceder como atributos directos (fallback)
                         try:
-                            symbol_params = {
+                            specific_overrides = {
                                 'ml_threshold': getattr(symbol_opt_params, 'ml_threshold', None),
                                 'stoch_overbought': getattr(symbol_opt_params, 'stoch_overbought', None),
                                 'stoch_oversold': getattr(symbol_opt_params, 'stoch_oversold', None),
@@ -623,12 +668,13 @@ class UltraDetailedHeikinAshiMLStrategy:
                             pass
 
         # Aplicar parámetros específicos del símbolo o valores por defecto
+        # PRIORIDAD: 1) Config directa, 2) Parámetros específicos del símbolo, 3) Valores por defecto universales (BASE)
         for param_name, default_value in default_params.items():
             # Primero intentar desde config directa, luego parámetros específicos del símbolo, luego default
             value = self.config.get(param_name, symbol_params.get(param_name, default_value))
             setattr(self, param_name, value)
 
-        print(f"[PARAMS] Parametros cargados para {current_symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
+        print(f"[PARAMS] Parametros BASE cargados para {current_symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
 
     def run(self, data: pd.DataFrame, symbol: str, timeframe: str = '4h') -> Dict:
         """
@@ -650,8 +696,8 @@ class UltraDetailedHeikinAshiMLStrategy:
             # MODO SEGURO: Verificar si está activado para evitar problemas Python 3.13
             safe_mode = self.config.get('ml_training', {}).get('safe_mode', False)
             if safe_mode:
-                print("🛡️  MODO SEGURO ACTIVADO - Usando solo indicadores técnicos (sin ML)")
-                raise ValueError("❌ MODO SEGURO NO PERMITIDO: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
+                print("  MODO SEGURO ACTIVADO - Usando solo indicadores técnicos (sin ML)")
+                raise ValueError(" MODO SEGURO NO PERMITIDO: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
 
             # VALIDAR datos mínimos para entrenamiento
             if len(data) < 100:
@@ -667,7 +713,7 @@ class UltraDetailedHeikinAshiMLStrategy:
 
             if optimization_mode:
                 # MODO OPTIMIZACIÓN: Asumir que modelos ya están entrenados
-                print(f"🎯 MODO OPTIMIZACIÓN: Usando modelos ML pre-entrenados para {symbol}")
+                print(f" MODO OPTIMIZACIÓN: Usando modelos ML pre-entrenados para {symbol}")
                 model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None
                 if not model_exists:
                     raise ValueError(f"Modelos ML no encontrados para {symbol} en modo optimización. "
@@ -680,9 +726,9 @@ class UltraDetailedHeikinAshiMLStrategy:
                 if should_retrain:
                     print(f"[WARNING] Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
                     self.ml_manager.train_models(data_processed, symbol)
-                    print("✅ Modelos ML entrenados y guardados")
+                    print(" Modelos ML entrenados y guardados")
                 else:
-                    print(f"✅ Usando modelos ML existentes para {symbol} (skip re-training)")
+                    print(f" Usando modelos ML existentes para {symbol} (skip re-training)")
 
             # CACHEAR predicciones ML usando modelo entrenado REAL
             print(f"Generando predicciones ML reales para {len(data_processed)} velas...")
@@ -719,11 +765,11 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         print(f"[CALC] Calculando indicadores técnicos para {len(data)} velas...")
         
-        # 🎯 USAR MÉTODO CENTRALIZADO PARA CONSISTENCIA CON ML
+        #  USAR MÉTODO CENTRALIZADO PARA CONSISTENCIA CON ML
         # Esto garantiza que _prepare_data y prepare_features usen EXACTAMENTE los mismos indicadores
         from indicators.technical_indicators import TechnicalIndicators
         indicators = TechnicalIndicators()
-        data = indicators.calculate_all_indicators_unified(data)
+        data = indicators.calculate_all_indicators(data)
         
         # [WARNING] CÓDIGO MANUAL ELIMINADO PARA EVITAR INCONSISTENCIAS [WARNING]
         # El siguiente código calculaba indicadores manualmente con TA-Lib,
@@ -756,7 +802,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             data = data.dropna(subset=critical_indicators)
             print(f"Datos limpiados: {len(data)} filas restantes")
 
-        if len(data) < 100:
+        if len(data) < 50:  # Reducido de 100 a 50 para live trading - más importante generar señales que datos perfectos
             raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas")
 
         # 4. Rellenar NaN restantes en indicadores no críticos
@@ -800,11 +846,11 @@ class UltraDetailedHeikinAshiMLStrategy:
             # MODO SEGURO: Verificar si está activado
             safe_mode = self.config.get('ml_training', {}).get('safe_mode', False)
             if safe_mode:
-                print("🛡️ MODO SEGURO LIVE ACTIVADO")
-                raise ValueError("❌ MODO SEGURO NO PERMITIDO EN LIVE: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
+                print(" MODO SEGURO LIVE ACTIVADO")
+                raise ValueError(" MODO SEGURO NO PERMITIDO EN LIVE: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
 
             # VALIDAR datos mínimos - Más flexible para live trading después de limpieza NaN
-            if len(data) < 80:
+            if len(data) < 30:
                 return {
                     'signal': 'NO_SIGNAL',
                     'signal_data': {},
@@ -819,7 +865,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             print(f"[LIVE SIGNAL] Datos preparados: {len(data_processed)} filas")
 
             # VALIDAR datos suficientes después de limpieza NaN
-            if len(data_processed) < 40:
+            if len(data_processed) < 20:
                 return {
                     'signal': 'NO_SIGNAL',
                     'signal_data': {},
@@ -983,7 +1029,7 @@ class UltraDetailedHeikinAshiMLStrategy:
         # DEBUG: Mostrar valores clave
         current_row = data.iloc[i]
         ml_conf = ml_confidence_all.iloc[i]
-        # logger.info(f"[DEBUG SIGNAL] Index {i}: ML={ml_conf:.3f}, RSI={current_row.get('rsi', 'N/A')}, Volume={current_row.get('volume', 'N/A')}, HA_Close={current_row.get('ha_close', 'N/A')}, HA_Open={current_row.get('ha_open', 'N/A')}, ATR={current_row.get('atr', 'N/A')}")
+        print(f"[DEBUG SIGNAL] Index {i}: ML={ml_conf:.3f}, RSI={current_row.get('rsi', 'N/A')}, Volume={current_row.get('volume', 'N/A')}, HA_Close={current_row.get('ha_close', 'N/A')}, HA_Open={current_row.get('ha_open', 'N/A')}, ATR={current_row.get('atr', 'N/A')}")
 
         # Obtener datos de la vela actual
         current_row = data.iloc[i]
@@ -1010,7 +1056,8 @@ class UltraDetailedHeikinAshiMLStrategy:
         # 2. MOMENTUM FILTER: RSI - MENOS restrictivo
         rsi = current_row.get('rsi', 50)
         rsi_ok_buy = rsi < 70  # Permitir RSI hasta 70 para compras
-        rsi_ok_sell = rsi > 30  # Permitir RSI desde 30 para ventas
+        # Para SELL: Permitir cuando RSI está bajo (sobreventa) = más oportunidades
+        rsi_ok_sell = rsi < 60  # Cambiar umbral a 60 para permitir ventas en sobreventa (RSI 28-29)
 
         # 3. VOLATILITY FILTER: ATR no demasiado alto - MENOS restrictivo
         atr = current_row.get('atr', 0)
@@ -1039,15 +1086,15 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         # BUY SIGNAL: ML confidence + trend bullish + RSI no sobrecomprado
         if trend_bullish and rsi_ok_buy and ml_conf >= self.ml_threshold_min:
-            # logger.info(f"[DEBUG SIGNAL] BUY SIGNAL GENERATED: trend_bullish={trend_bullish}, rsi_ok_buy={rsi_ok_buy}, ml_conf={ml_conf:.3f}")
+            print(f"[DEBUG SIGNAL] BUY SIGNAL GENERATED: trend_bullish={trend_bullish}, rsi_ok_buy={rsi_ok_buy}, ml_conf={ml_conf:.3f}")
             return 1
 
         # SELL SIGNAL: ML confidence + trend bearish + RSI no sobrevendido
         elif trend_bearish and rsi_ok_sell and ml_conf >= self.ml_threshold_min:
-            # logger.info(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
+            print(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
             return -1
 
-        # logger.info(f"[DEBUG SIGNAL] NO SIGNAL: trend_bullish={trend_bullish}, trend_bearish={trend_bearish}, rsi_ok_buy={rsi_ok_buy}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
+        print(f"[DEBUG SIGNAL] NO SIGNAL: trend_bullish={trend_bullish}, trend_bearish={trend_bearish}, rsi_ok_buy={rsi_ok_buy}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
         return 0
 
     def _generate_signals(self, data: pd.DataFrame, symbol: str, ml_confidence_all: pd.Series) -> pd.Series:
@@ -1182,11 +1229,11 @@ class UltraDetailedHeikinAshiMLStrategy:
         if hasattr(self, 'portfolio_value') and self.portfolio_value != 10000.0:
             # Modo live: usar balance real de la cuenta
             capital = self.portfolio_value
-            self.logger.info(f"🔥 MODO LIVE: Usando balance real de cuenta: ${capital:.2f}")
+            self.logger.info(f" MODO LIVE: Usando balance real de cuenta: ${capital:.2f}")
         else:
             # Modo backtesting: usar capital configurado
             capital = self.config.backtesting.initial_capital if self.config and hasattr(self.config, 'backtesting') else self.portfolio_value
-            self.logger.info(f"📊 MODO BACKTEST: Usando capital configurado: ${capital:.2f}")
+            self.logger.info(f" MODO BACKTEST: Usando capital configurado: ${capital:.2f}")
         trades = []
         peak_value = capital
         max_drawdown = 0
@@ -1424,7 +1471,7 @@ class UltraDetailedHeikinAshiMLStrategy:
         """
         MÉTODO BLOQUEADO: El sistema debe usar SIEMPRE ML, nunca modo seguro
         """
-        raise ValueError("❌ MODO SEGURO NO PERMITIDO: El sistema debe usar SIEMPRE la red neuronal ML entrenada")
+        raise ValueError(" MODO SEGURO NO PERMITIDO: El sistema debe usar SIEMPRE la red neuronal ML entrenada")
 
     def _get_live_signal_safe_mode(self, data: pd.DataFrame, symbol: str, timeframe: str) -> Dict:
         """
@@ -1554,7 +1601,7 @@ class UltraDetailedHeikinAshiMLStrategy:
                     if new_stop_loss > current_stop:
                         position_data['stop_loss'] = new_stop_loss
                         position_data['trailing_stop_updated'] = True  # Marcar que el trailing stop se activó
-                        self.logger.info(f"🛡️ TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
+                        self.logger.info(f" TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
                         return {'should_close': False, 'trailing_stop_adjusted': True}
                         
                 else:  # sell/short
@@ -1565,7 +1612,7 @@ class UltraDetailedHeikinAshiMLStrategy:
                     if new_stop_loss < current_stop:
                         position_data['stop_loss'] = new_stop_loss
                         position_data['trailing_stop_updated'] = True  # Marcar que el trailing stop se activó
-                        self.logger.info(f"🛡️ TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
+                        self.logger.info(f" TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
                         return {'should_close': False, 'trailing_stop_adjusted': True}
 
             return {'should_close': False}

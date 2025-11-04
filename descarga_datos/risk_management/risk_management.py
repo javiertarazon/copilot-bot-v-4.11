@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from utils.logger import get_logger
+from risk_management.trailing_stop_manager import TrailingStopManager
 
 logger = get_logger(__name__)
 
@@ -76,6 +77,9 @@ class AdvancedRiskManager:
         self.logger = get_logger(__name__ + ".AdvancedRiskManager")
         self.trade_history = []
         self.lookback_period = 100  # Número de trades para calcular métricas
+        
+        # FASE 7 - TRAILING STOPS: Inicializar gestor de trailing stops
+        self.trailing_stop_manager = TrailingStopManager(logger=self.logger)
         
     def calculate_kelly_fraction(self, 
                                 win_rate: float, 
@@ -180,6 +184,166 @@ class AdvancedRiskManager:
                 'stop_distance_pct': 0.0
             }
     
+    def update_trailing_stops(self, 
+                             positions: Dict[str, Dict[str, Any]], 
+                             current_candle_data: Dict[str, Any],
+                             atr_period: int = 17) -> Dict[str, Any]:
+        """
+        FASE 7 - TRAILING STOPS: Actualiza los trailing stops dinámicos para todas las posiciones.
+        
+        Este método debe llamarse cada vela (candle) para actualizar los stops según ATR.
+        
+        Args:
+            positions: Diccionario de posiciones activas {position_id: position_data}
+            current_candle_data: Datos de la vela actual {'open', 'high', 'low', 'close', 'atr', ...}
+            atr_period: Período ATR para cálculo dinámico (default 17)
+            
+        Returns:
+            Diccionario con resultado de actualización:
+            {
+                'status': 'success' o 'error',
+                'updated_positions': {position_id: updated_data},
+                'triggered_stops': [lista de stops activados],
+                'error': mensaje de error si aplica
+            }
+        """
+        try:
+            self.logger.info(f"🔄 [TRAILING] Actualizando trailing stops para {len(positions)} posiciones")
+            
+            updated_positions = {}
+            triggered_stops = []
+            
+            for position_id, position in positions.items():
+                try:
+                    # Obtener datos necesarios
+                    symbol = position.get('symbol', 'UNKNOWN')
+                    direction = position.get('direction', 'buy').lower()
+                    entry_price = position.get('entry_price', 0.0)
+                    current_stop = position.get('stop_loss', entry_price)
+                    current_price = current_candle_data.get('close', entry_price)
+                    atr = current_candle_data.get('atr', 0.0)
+                    
+                    # Calcular nuevo stop loss dinámico usando TrailingStopManager
+                    new_stop = self.trailing_stop_manager.calculate_trailing_stop(
+                        position_type='long' if direction == 'buy' else 'short',
+                        entry_price=entry_price,
+                        current_price=current_price,
+                        atr=atr,
+                        atr_multiplier=2.25  # 2.25x ATR para stop loss
+                    )
+                    
+                    # Verificar si el stop ha sido activado
+                    if direction == 'buy' and current_price <= new_stop:
+                        self.logger.warning(f"🔴 [TRAILING] Stop loss activado para {symbol} (LONG)")
+                        triggered_stops.append({
+                            'position_id': position_id,
+                            'symbol': symbol,
+                            'reason': 'trailing_stop_reached',
+                            'trigger_price': current_price,
+                            'stop_price': new_stop
+                        })
+                    elif direction == 'sell' and current_price >= new_stop:
+                        self.logger.warning(f"🔴 [TRAILING] Stop loss activado para {symbol} (SHORT)")
+                        triggered_stops.append({
+                            'position_id': position_id,
+                            'symbol': symbol,
+                            'reason': 'trailing_stop_reached',
+                            'trigger_price': current_price,
+                            'stop_price': new_stop
+                        })
+                    
+                    # Actualizar posición con nuevo stop
+                    updated_position = position.copy()
+                    updated_position['stop_loss'] = new_stop
+                    updated_position['stop_updated_at'] = datetime.now()
+                    updated_position['stop_update_price'] = current_price
+                    
+                    updated_positions[position_id] = updated_position
+                    
+                    self.logger.debug(f"✅ [TRAILING] {symbol}: Stop actualizado {current_stop:.2f} → {new_stop:.2f}")
+                    
+                except Exception as pos_error:
+                    self.logger.error(f"❌ [TRAILING] Error actualizando posición {position_id}: {str(pos_error)}")
+                    # Mantener posición sin cambios en caso de error
+                    updated_positions[position_id] = position
+            
+            return {
+                'status': 'success',
+                'updated_positions': updated_positions,
+                'triggered_stops': triggered_stops,
+                'positions_updated': len(updated_positions),
+                'stops_triggered': len(triggered_stops)
+            }
+        
+        except Exception as e:
+            self.logger.error(f"❌ [TRAILING] Error general en actualización de trailing stops: {str(e)}")
+            return {
+                'status': 'error',
+                'error': str(e),
+                'updated_positions': positions,
+                'triggered_stops': []
+            }
+    
+    def sync_stops_with_exchange(self,
+                                positions: Dict[str, Dict[str, Any]],
+                                order_executor) -> Dict[str, Any]:
+        """
+        FASE 7 - TRAILING STOPS: Sincroniza los stops con el exchange para asegurar que están activos.
+        
+        Args:
+            positions: Posiciones locales con stops actualizados
+            order_executor: Executor para enviar órdenes al exchange
+            
+        Returns:
+            Resultado de sincronización con exchange
+        """
+        try:
+            self.logger.info(f"🔄 [SYNC-STOPS] Sincronizando {len(positions)} stops con exchange")
+            
+            synced_count = 0
+            errors = []
+            
+            for position_id, position in positions.items():
+                try:
+                    symbol = position.get('symbol')
+                    stop_loss = position.get('stop_loss')
+                    
+                    if not symbol or not stop_loss:
+                        continue
+                    
+                    # Usar el order_executor para actualizar stop en exchange
+                    result = order_executor.update_stop_loss(
+                        symbol=symbol,
+                        order_id=position_id,
+                        stop_loss=stop_loss
+                    )
+                    
+                    if result.get('success'):
+                        synced_count += 1
+                        self.logger.debug(f"✅ [SYNC-STOPS] {symbol} stop sincronizado: {stop_loss:.2f}")
+                    else:
+                        errors.append(f"{symbol}: {result.get('message', 'Unknown error')}")
+                        self.logger.warning(f"⚠️  [SYNC-STOPS] Fallo sincronizando {symbol}: {result.get('message')}")
+                
+                except Exception as sync_error:
+                    errors.append(f"{position.get('symbol', 'UNKNOWN')}: {str(sync_error)}")
+                    self.logger.error(f"❌ [SYNC-STOPS] Error sincronizando posición {position_id}: {str(sync_error)}")
+            
+            return {
+                'status': 'success' if not errors else 'partial',
+                'synced_count': synced_count,
+                'total_positions': len(positions),
+                'errors': errors
+            }
+        
+        except Exception as e:
+            self.logger.error(f"❌ [SYNC-STOPS] Error general sincronizando stops: {str(e)}")
+            return {
+                'status': 'error',
+                'error': str(e),
+                'synced_count': 0
+            }
+    
     def update_trade_history(self, pnl: float, success: bool):
         """Actualiza el historial de trades para el cálculo de Kelly"""
         self.trade_history.append({
@@ -241,7 +405,7 @@ def apply_risk_management(signal: Dict[str, Any],
     Returns:
         Señal modificada con tamaño de posición, stop loss y take profit ajustados
     """
-    logger.info(f"🔄 Iniciando aplicación de gestión de riesgo a señal: {signal['signal'] if 'signal' in signal else 'UNKNOWN'} en {signal.get('symbol', 'UNKNOWN')}")
+    logger.info(f"🔄 Iniciando aplicación de gestión de riesgo a señal: {signal.get('action', 'UNKNOWN')} en {signal.get('symbol', 'UNKNOWN')}")
     logger.debug(f"📊 Detalles completos de la señal: {signal}")
     
     # Obtener gestor de riesgo

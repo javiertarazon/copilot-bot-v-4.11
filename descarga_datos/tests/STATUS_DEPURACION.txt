@@ -1,0 +1,31 @@
+================================================================================
+🧹 DEPURACIÓN DE CARPETA /tests - COMPLETADA
+================================================================================
+
+RESULTADO FINAL:
+  87 archivos Python → 6 archivos esenciales (93% de reducción)
+
+TESTS MANTENIDOS:
+  ✅ test_deriv_complete.py ................... Live trading MT5
+  ✅ verify_equivalence_simple.py ............ Backtest vs Live
+  ✅ backtest_clean_combined.py ............. Backtest limpio
+  ✅ migrate_csv_to_sqlite.py ............... Migración de datos
+  ✅ check_data_paths_consolidated.py ...... Validador de estructura
+  ✅ test_quick_backtest.py ................. Smoke test (NUEVO)
+
+DOCUMENTACIÓN:
+  📚 README_TESTS.md ......................... Guía completa de tests
+
+TESTS ARCHIVADOS:
+  📦 82 archivos en BACKUP_OLD_TESTS_20251102_1547/
+
+VALIDACIÓN:
+  ✅ Smoke test: 5/5 PASAN
+  ✅ BD accesible: 3.77 MB
+  ✅ CSV files: 4 disponibles
+  ✅ Estructura: LIMPIA
+
+EJECUCIÓN RÁPIDA:
+  python descarga_datos/tests/test_quick_backtest.py
+
+Status: 🟢 LISTO PARA OPERACIÓN

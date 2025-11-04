@@ -1,0 +1,224 @@
+active_exchange: binance
+backtesting:
+  commission: 0.1
+  data_quality: null
+  end_date: '2025-10-24'
+  initial_capital: 800  # Capital inicial cambiado a 800 USDT
+  optimized_parameters:
+    BTC_USDT:
+      atr_period: 17
+      cci_threshold: 90
+      ema_trend_period: 50
+      kelly_fraction: 0.1
+      liquidity_score_min: 5
+      max_concurrent_trades: 1
+      max_drawdown: 0.03
+      max_portfolio_heat: 0.05
+      min_rr_ratio: 2.5
+      ml_threshold: 0.2
+      ml_threshold_max: 0.8
+      ml_threshold_min: 0.2
+      risk_per_trade: 0.02
+      sar_acceleration: 0.04
+      sar_maximum: 0.26
+      stoch_overbought: 70
+      stoch_oversold: 35
+      stop_loss_atr_multiplier: 2.25
+      take_profit_atr_multiplier: 3.75
+      volume_ratio_min: 0.3
+  slippage: 0.05
+  start_date: '2024-06-01'
+  strategies:
+    HeikinNeuronalMLPruebas: false
+    UltraDetailedHeikinAshiML: true
+  strategy_paths:
+    HeikinNeuronalMLPruebas:
+    - strategies.heikin_neuronal_ml_pruebas
+    - HeikinNeuronalMLPruebasStrategy
+    UltraDetailedHeikinAshiML:
+    - strategies.ultra_detailed_heikin_ashi_ml_strategy
+    - UltraDetailedHeikinAshiMLStrategy
+  symbol_selection:
+    BTC/USDT: true
+  symbols:
+  - BTC/USDT
+  timeframe: 15m
+compensation_strategy:
+  compensation_max_loss: 1.0
+  emergency_stop_buffer: 0.8
+  enabled: true
+  loss_threshold: 0.5
+  max_account_drawdown: 3.0
+  risk_multiplier_high_dd: 0.7
+  size_multiplier: 3.0
+  tp_percent: 0.5
+data:
+  limit_per_request: 2000
+  max_retries: 3
+  retry_delay: 5
+  use_ccxt_for_crypto: true
+  use_mt5_for_stocks: false
+  validate_data: true
+exchanges:
+  binance:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: true
+    timeout: 30000
+  bybit:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: true
+    timeout: 30000
+indicators:
+  adx:
+    enabled: true
+    period: 14
+    threshold: 25
+  atr:
+    enabled: true
+    period: 14
+  ema:
+    enabled: true
+    periods:
+    - 10
+    - 20
+    - 200
+  heikin_ashi:
+    enabled: true
+    size_comparison_threshold: 1.2
+    trend_period: 3
+  parabolic_sar:
+    acceleration: 0.02
+    enabled: true
+    maximum: 0.2
+  volatility:
+    enabled: true
+    method: standard_deviation
+    period: 14
+live_trading:
+  account_type: DEMO
+  active_strategy: UltraDetailedHeikinAshiMLStrategy
+  active_symbol: BTC/USDT
+  apply_risk_management: true
+  ccxt_exchange: binance
+  ccxt_symbols:
+  - BTC/USDT
+  ccxt_timeframes:
+  - 15m
+  enabled: true
+  initial_history_bars: 500
+  
+  # ========== TIPO DE TRADING ==========
+  # ⚠️ IMPORTANTE: Solo se permite MARGIN (apalancamiento) o FUTURES (perpetuos)
+  # SPOT ha sido ELIMINADO del sistema - no es viable
+  # Opciones VÁLIDAS: 'margin' (apalancado 1-20x) o 'futures' (perpetuos 1-20x)
+  trading_mode: margin              # MARGIN: Apalancamiento directo | FUTURES: Perpetuos sin vencimiento
+  
+  # Configuración de Margin Trading (MARGIN MODE)
+  margin_type: cross                # 'cross' (riesgo compartido) o 'isolated' (riesgo aislado por posición)
+  margin_leverage: 5                # ✅ CORREGIDO: Reducido de 10 a 5x (más estable con fórmula corregida)
+  
+  # Configuración de Futures/Perpetuales (FUTURES MODE)
+  futures_leverage: 5               # ✅ CORREGIDO: Reducido de 10 a 5x
+  futures_position_mode: 'net'      # 'net' (unidireccional) o 'hedge' (long+short simultáneamente)
+  futures_mode_type: 'USD-M'        # 'USD-M' (BTC/USDT perpetuals) o 'COIN-M' (BTC/USD coin perpetuals)
+  
+  # Configuración de límite de posiciones
+  enable_position_limit: false        # ⚠️ DESACTIVADO: Permite múltiples operaciones sin límite
+  max_positions: 2                    # Se usa solo si enable_position_limit=true
+  max_positions_per_symbol: 1         # Se usa solo si enable_position_limit=true
+  
+  # Sincronización de posiciones (CRÍTICA - EVITA CIERRE PREMATURO)
+  position_sync_timeout: 5            # Segundos antes de considerar una posición como cerrada
+  position_sync_interval: 10          # Segundos entre sincronizaciones de posiciones reales
+  use_open_orders_only: false         # ⭐ IMPORTANTE: false=busca también posiciones ejecutadas, true=solo órdenes abiertas
+  
+  mode: CCXT
+  mt5_symbols:
+  - EURUSD
+  - USDJPY
+  - XAUUSD
+  mt5_timeframes:
+  - 1h
+  - 4h
+  - 1d
+  risk_per_trade: 0.02              # ✅ CORREGIDO: Aumentado de 0.002 (0.2%) a 0.02 (2%) - con fórmula correcta es seguro
+  # Parámetros conservadores para cripto (MARGIN y FUTURES)
+  max_risk_per_trade_usd: 50.0        # Máximo $50 USD por trade
+  max_position_crypto: 0.001          # Máximo 0.001 BTC por posición
+  min_position_crypto: 0.0001         # Mínimo 0.0001 BTC por posición
+  max_position_size: 0.01             # Máximo 1% del balance por posición
+  trailing_activation_pct: 0.65
+  strategy_mapping: {}
+  update_interval_seconds: 900
+  validation: {}
+ml_training:
+  enabled_models:
+    random_forest: true
+  models:
+    random_forest:
+      max_depth: 15
+      n_estimators: 300
+      min_samples_split: 10
+      min_samples_leaf: 4
+      max_features: 'sqrt'
+      n_jobs: 1
+      random_state: 42
+  optimization:
+    constraints:
+      max_drawdown_limit: 0.08
+    enabled: true
+    n_trials: 300
+    opt_end: '2025-10-16'
+    opt_start: '2025-01-01'
+    study_name: roi_5percent_winrate_80_v1
+    targets:
+      maximize: ['total_pnl', 'win_rate', 'pnl_return']
+      minimize: ['max_drawdown']
+      constraints:
+        min_trades: 50
+        max_drawdown_limit: 0.08
+        min_win_rate: 0.80
+        min_pnl_return: 352.79
+  safe_mode: false
+  training:
+    min_samples: 500
+    train_end: '2022-12-31'
+    train_start: '2019-01-01'
+    val_end: '2023-12-31'
+    val_start: '2023-01-01'
+mt5:
+  enabled: false
+  login: 0
+  password: ''
+  server: ''
+  terminal_path: ''
+  timeout: 60000
+reports:
+  generate_comparison: true
+  output_directory: backtest_results
+  save_equity_curves: true
+  save_individual_results: true
+  save_trade_details: true
+risk:
+  max_drawdown_limit: 8.0
+  risk_percent: 0.5
+  sl_atr_multiplier: 1.5
+  tp_atr_multiplier: 2.0
+risk_management:
+  max_position_size_pct: 0.01
+  risk_per_trade: 0.002
+storage:
+  cache_enabled: true
+  csv_enabled: true
+  path: descarga_datos/data
+  sqlite_enabled: true
+system:
+  auto_launch_dashboard: true
+  log_file: logs/bot_trader.log
+  log_level: INFO
+  name: Bot Trader Copilot
+  version: 3.0

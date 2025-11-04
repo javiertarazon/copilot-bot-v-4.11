@@ -67,8 +67,34 @@ class CCXTLiveTradingOrchestrator:
         
         # Usar exchange activo de configuración si no se especifica
         if exchange_name is None:
-            exchange_name = self.config.get('active_exchange', 'binance')
+            exchange_name = self.config.get('active_exchange', 'bybit')
         self.exchange_name = exchange_name
+        
+        # ✅ VERIFICACIÓN CRÍTICA: Asegurar que se está usando el exchange correcto
+        logger.info("=" * 80)
+        logger.info("🔍 VERIFICACIÓN DE EXCHANGE - MODO LIVE CCXT")
+        logger.info("=" * 80)
+        logger.info(f"Exchange configurado en config.yaml: {self.config.get('active_exchange', 'NO CONFIGURADO')}")
+        logger.info(f"Exchange que se usará: {exchange_name}")
+        
+        # Verificar configuración de exchanges
+        exchanges_config = self.config.get('exchanges', {})
+        if exchange_name in exchanges_config:
+            exchange_cfg = exchanges_config[exchange_name]
+            logger.info(f"Estado del exchange {exchange_name}:")
+            logger.info(f"  - Habilitado: {exchange_cfg.get('enabled', False)}")
+            logger.info(f"  - Sandbox/Testnet: {exchange_cfg.get('sandbox', False)}")
+            logger.info(f"  - API Key configurada: {'✅ SÍ' if exchange_cfg.get('api_key') else '⚠️ NO (se cargará desde .env)'}")
+            
+            if not exchange_cfg.get('enabled', False):
+                logger.error(f"❌ ERROR CRÍTICO: Exchange {exchange_name} NO está habilitado en config.yaml")
+                logger.error(f"   Para habilitar, cambiar exchanges.{exchange_name}.enabled a true")
+                raise ValueError(f"Exchange {exchange_name} no está habilitado en configuración")
+        else:
+            logger.error(f"❌ ERROR CRÍTICO: Exchange {exchange_name} no existe en configuración")
+            raise ValueError(f"Exchange {exchange_name} no encontrado en config.yaml")
+        
+        logger.info("=" * 80)
 
         # Configuración de live trading
         self.live_config = self.config.get('live_trading', {})
@@ -373,6 +399,31 @@ class CCXTLiveTradingOrchestrator:
         Args:
             duration_minutes: Duración en minutos (opcional, si es None corre indefinidamente)
         """
+        # ✅ VERIFICACIONES DE SEGURIDAD ANTES DE INICIAR
+        logger.info("=" * 80)
+        logger.info("🚀 INICIANDO TRADING EN VIVO - VERIFICACIONES DE SEGURIDAD")
+        logger.info("=" * 80)
+        
+        # VERIFICACIÓN 1: Exchange correcto
+        logger.info(f"1️⃣ Exchange configurado: {self.exchange_name}")
+        if self.exchange_name != self.config.get('active_exchange'):
+            logger.error(f"❌ DISCREPANCIA: Exchange usado ({self.exchange_name}) != Exchange config ({self.config.get('active_exchange')})")
+            raise ValueError("Exchange no coincide con configuración")
+        logger.info(f"   ✅ Exchange coincide: {self.exchange_name}")
+        
+        # VERIFICACIÓN 2: Modo testnet/sandbox
+        exchanges_config = self.config.get('exchanges', {})
+        exchange_cfg = exchanges_config.get(self.exchange_name, {})
+        is_sandbox = exchange_cfg.get('sandbox', False)
+        logger.info(f"2️⃣ Modo Sandbox/Testnet: {is_sandbox}")
+        if not is_sandbox:
+            logger.warning("⚠️ ADVERTENCIA: NO está en modo sandbox - Usando cuenta REAL")
+        else:
+            logger.info("   ✅ Modo testnet activado")
+        
+        logger.info("=" * 80)
+        logger.info("")
+        
         if not self.connect():
             logger.error("No se pudieron conectar los componentes. Abortando.")
             return
@@ -382,6 +433,20 @@ class CCXTLiveTradingOrchestrator:
 
         # Cargar estrategias
         self.load_strategies()
+        
+        # ✅ CONFIGURAR LEVERAGE PARA CADA SÍMBOLO (como en test exitoso)
+        symbols = self.config.get('symbols', [])
+        leverage = self.config.get('margin_leverage', 5)
+        
+        for symbol in symbols:
+            try:
+                self.order_executor.exchange.set_leverage(leverage, symbol)
+                logger.info(f"✅ Leverage {leverage}x configurado para {symbol}")
+            except Exception as e:
+                if "not modified" in str(e).lower():
+                    logger.info(f"✅ Leverage ya configurado para {symbol}")
+                else:
+                    logger.warning(f"⚠️ No se pudo configurar leverage para {symbol}: {e}")
 
         # Iniciar actualizaciones de datos en tiempo real
         self.data_provider.start_real_time_updates()
@@ -441,6 +506,8 @@ class CCXTLiveTradingOrchestrator:
         """
         Procesa las señales de trading generadas por las estrategias.
         """
+        import gc
+        
         logger.info(f"🔍 Procesando señales de trading...")
         
         # Obtener datos actuales para cada símbolo
@@ -533,6 +600,9 @@ class CCXTLiveTradingOrchestrator:
 
                 except Exception as e:
                     logger.error(f"Error procesando estrategia {strategy_name} para {symbol}: {e}")
+        
+        # Limpiar memoria después de procesar todas las estrategias
+        gc.collect()
 
     def _handle_strategy_signal(self, strategy_name: str, symbol: str, result: Dict[str, Any], strategy_instance=None):
         """
@@ -671,7 +741,7 @@ class CCXTLiveTradingOrchestrator:
                 # Si hay posición abierta en dirección opuesta, cerrarla primero
                 if existing_position and existing_position['type'] != signal.lower():
                     logger.info(f"Cerrando posición opuesta para {symbol}")
-                    close_success = self.order_executor.close_position(existing_position['ticket'])
+                    close_success = self.order_executor.close_position_safe(existing_position['ticket'])
                     if close_success:
                         # Remover la posición cerrada del diccionario active_positions
                         del self.active_positions[existing_position['ticket']]
@@ -727,76 +797,200 @@ class CCXTLiveTradingOrchestrator:
 
     def _update_trailing_stop(self, ticket: str, position: Dict, current_price: float) -> bool:
         """
-        Actualiza dinámicamente el trailing stop de una posición.
+        Actualiza dinámicamente el trailing stop basado en el precio más alto/bajo.
         
-        Args:
-            ticket: ID de la posición
-            position: Datos de la posición
-            current_price: Precio actual del mercado
-            
-        Returns:
-            bool: True si se actualizó el stop loss, False si no
+        Lógica Correcta:
+        - Rastrear highest_price (para LONG) o lowest_price (para SHORT)
+        - Calcular distancia desde highest_price
+        - Mover stop loss solo si mejora la protección
+        
+        Ejemplo LONG:
+          - Entry: 100,000
+          - Current: 102,000 (ganancia $2,000)
+          - Highest: 102,000
+          - trailing_pct: 0.50 (50% del profit)
+          - Stop distance: $2,000 * 0.50 = $1,000
+          - New stop: 102,000 - 1,000 = 101,000
         """
         try:
             entry_price = position.get('entry_price')
             current_stop = position.get('stop_loss')
-            trailing_stop_pct = position.get('trailing_stop_pct', 0.80)
-            direction = position.get('type', 'buy')
+            trailing_stop_pct = position.get('trailing_stop_pct', 0.50)  # 50% por defecto
+            position_type = position.get('type', 'buy')
             
-            if not entry_price or not current_stop:
+            if not entry_price or current_stop is None:
                 return False
             
-            # Calcular profit actual
-            if direction == 'buy':
-                unrealized_pnl = current_price - entry_price
-                profit_amount = max(0, unrealized_pnl)
-            else:  # sell/short
-                unrealized_pnl = entry_price - current_price
-                profit_amount = max(0, unrealized_pnl)
-            
-            # Solo actualizar si hay ganancia
-            if profit_amount > 0:
-                # Calcular nuevo stop loss basado en trailing stop
-                new_stop_distance = profit_amount * trailing_stop_pct
+            # ✅ CORRECCIÓN: Usar highest/lowest según dirección
+            if position_type == 'buy':
+                # Para posiciones LONG
+                highest_price = position.get('highest_price', current_price)
                 
-                if direction == 'buy':
-                    # Para BUY: nuevo stop = entry + (profit * trailing_pct)
-                    new_stop_price = entry_price + new_stop_distance
+                # Actualizar highest si el precio actual es mayor
+                if current_price > highest_price:
+                    position['highest_price'] = current_price
+                    highest_price = current_price
+                
+                # Calcular profit respecto a highest
+                max_profit = highest_price - entry_price
+                
+                if max_profit > 0:
+                    # Distancia que queremos mantener del highest (riesgo)
+                    risk_distance = max_profit * (1 - trailing_stop_pct)
                     
-                    # Solo actualizar si el nuevo stop es MAYOR que el actual (sube el stop)
+                    # Nuevo stop = highest - risk_distance
+                    new_stop_price = highest_price - risk_distance
+                    
+                    # Solo actualizar si el nuevo stop es MAYOR (mejor protección)
                     if new_stop_price > current_stop:
                         position['stop_loss'] = new_stop_price
                         position['trailing_stop_updated'] = True
-                        position['highest_price'] = max(position.get('highest_price', current_price), current_price)
                         
                         self.active_positions[ticket] = position
-                        logger.info(f"� TRAILING STOP ACTIVADO {ticket}")
-                        logger.info(f"   🔼 Stop Loss mejorado: ${current_stop:.2f} → ${new_stop_price:.2f}")
-                        logger.info(f"   💰 Ganancia protegida: ${profit_amount:.2f} ({trailing_stop_pct:.0%} del profit)")
-                        logger.info(f"   📊 Precio más alto alcanzado: ${position.get('highest_price', current_price):.2f}")
-                        return True
+                        logger.info(f"✅ TRAILING STOP ACTUALIZADO - {ticket}")
+                        logger.info(f"   Entrada: ${entry_price:,.2f}")
+                        logger.info(f"   Máximo: ${highest_price:,.2f}")
+                        logger.info(f"   Actual: ${current_price:,.2f}")
+                        logger.info(f"   Stop anterior: ${current_stop:,.2f}")
+                        logger.info(f"   Stop nuevo: ${new_stop_price:,.2f}")
+                        logger.info(f"   Profit máximo: ${max_profit:,.2f}")
+                        logger.info(f"   Protección: {trailing_stop_pct:.1%} del profit")
                         
-                else:  # sell/short
-                    # Para SELL: nuevo stop = entry - (profit * trailing_pct)
-                    new_stop_price = entry_price - new_stop_distance
+                        return True
+            
+            else:  # sell/short
+                # Para posiciones SHORT
+                lowest_price = position.get('lowest_price', current_price)
+                
+                # Actualizar lowest si el precio actual es menor
+                if current_price < lowest_price:
+                    position['lowest_price'] = current_price
+                    lowest_price = current_price
+                
+                # Calcular profit respecto a lowest
+                max_profit = entry_price - lowest_price
+                
+                if max_profit > 0:
+                    # Distancia que queremos mantener del lowest (riesgo)
+                    risk_distance = max_profit * (1 - trailing_stop_pct)
                     
-                    # Solo actualizar si el nuevo stop es MENOR que el actual (baja el stop)
+                    # Nuevo stop = lowest + risk_distance
+                    new_stop_price = lowest_price + risk_distance
+                    
+                    # Solo actualizar si el nuevo stop es MENOR (mejor protección)
                     if new_stop_price < current_stop:
                         position['stop_loss'] = new_stop_price
                         position['trailing_stop_updated'] = True
-                        position['lowest_price'] = min(position.get('lowest_price', current_price), current_price)
                         
                         self.active_positions[ticket] = position
-                        logger.info(f"� TRAILING STOP ACTIVADO {ticket}")
-                        logger.info(f"   🔽 Stop Loss mejorado: ${current_stop:.2f} → ${new_stop_price:.2f}")
-                        logger.info(f"   💰 Ganancia protegida: ${profit_amount:.2f} ({trailing_stop_pct:.0%} del profit)")
-                        logger.info(f"   📊 Precio más bajo alcanzado: ${position.get('lowest_price', current_price):.2f}")
+                        logger.info(f"✅ TRAILING STOP ACTUALIZADO - {ticket}")
+                        logger.info(f"   Entrada: ${entry_price:,.2f}")
+                        logger.info(f"   Mínimo: ${lowest_price:,.2f}")
+                        logger.info(f"   Actual: ${current_price:,.2f}")
+                        logger.info(f"   Stop anterior: ${current_stop:,.2f}")
+                        logger.info(f"   Stop nuevo: ${new_stop_price:,.2f}")
+                        logger.info(f"   Profit máximo: ${max_profit:,.2f}")
+                        logger.info(f"   Protección: {trailing_stop_pct:.1%} del profit")
+                        
                         return True
             
             return False
-            
+        
         except Exception as e:
-            logger.error(f"Error actualizando trailing stop para {ticket}: {e}")
+            logger.error(f"❌ Error actualizando trailing stop para {ticket}: {e}")
+            return False
+
+    def sync_positions_with_exchange(self) -> bool:
+        """
+        Sincroniza posiciones internas con órdenes reales en Binance.
+        
+        Ejecutar cada 30-60 segundos para:
+        1. Detectar posiciones cerradas que el sistema aún cree abiertas
+        2. Detectar posiciones abiertas no rastreadas por el sistema
+        3. Limpiar posiciones fantasma
+        
+        Returns:
+            bool: True si la sincronización fue exitosa
+        """
+        try:
+            symbol = self.backtesting_config.get('symbols', ['BTC/USDT'])[0]
+            
+            # 1. Obtener órdenes REALES abiertas en Binance
+            # ⚠️ En testnet, los endpoints SAPI pueden no estar disponibles
+            try:
+                real_open_orders = self.order_executor.exchange.fetch_open_orders(symbol)
+                real_open_ids = set(str(o['id']) for o in real_open_orders)
+            except Exception as e:
+                if 'sapi' in str(e).lower() or 'testnet' in str(e).lower():
+                    logger.warning(f"⚠️  fetch_open_orders no disponible en testnet: {e}")
+                    real_open_orders = []
+                    real_open_ids = set()
+                else:
+                    raise
+            
+            # 2. Obtener órdenes CERRADAS recientes (últimas 2 horas)
+            import time
+            since_ms = int((time.time() - 7200) * 1000)  # 2 horas atrás
+            try:
+                real_closed_orders = self.order_executor.exchange.fetch_closed_orders(symbol, since=since_ms)
+                real_closed_ids = set(str(o['id']) for o in real_closed_orders)
+            except Exception as e:
+                if 'sapi' in str(e).lower() or 'testnet' in str(e).lower():
+                    logger.warning(f"⚠️  fetch_closed_orders no disponible en testnet: {e}")
+                    real_closed_orders = []
+                    real_closed_ids = set()
+                else:
+                    raise
+            
+            # 3. Verificar cada posición interna
+            system_tickets = list(self.active_positions.keys())
+            
+            for ticket in system_tickets:
+                position = self.active_positions[ticket]
+                
+                # ¿Está la posición abierta en Binance?
+                if str(ticket) in real_open_ids:
+                    # Actualizar con datos reales de Binance
+                    real_order = next((o for o in real_open_orders if str(o['id']) == str(ticket)), None)
+                    if real_order:
+                        position['filled'] = real_order.get('filled', 0)
+                        position['status'] = real_order.get('status', 'open')
+                
+                # ¿Está la posición cerrada en Binance pero abierta en el sistema?
+                elif str(ticket) in real_closed_ids:
+                    real_order = next((o for o in real_closed_orders if str(o['id']) == str(ticket)), None)
+                    if real_order:
+                        logger.warning(f"⚠️  SINCRONIZACIÓN: Posición {ticket} cerrada en Binance pero abierta en sistema")
+                        logger.warning(f"   Estado en Binance: {real_order.get('status')}")
+                        logger.warning(f"   Cantidad ejecutada: {real_order.get('filled')}/{real_order.get('amount')}")
+                        
+                        # Marcar para cierre
+                        position['needs_cleanup'] = True
+                        position['binance_status'] = real_order.get('status')
+                
+                else:
+                    # Posición NO encontrada en Binance (ni abierta ni cerrada recientemente)
+                    logger.warning(f"⚠️  SINCRONIZACIÓN: Posición {ticket} NO encontrada en Binance")
+                    logger.warning(f"   Posible razón: Cerrada hace >2 horas o ID incorrecto")
+                    position['needs_cleanup'] = True
+            
+            # 4. Buscar posiciones en Binance que NO están en el sistema
+            for real_order in real_open_orders:
+                if str(real_order['id']) not in self.active_positions:
+                    logger.warning(f"⚠️  NUEVA POSICIÓN DETECTADA: {real_order['id']} (no en sistema)")
+                    logger.warning(f"   Lado: {real_order['side']}, Cantidad: {real_order['amount']}")
+                    logger.warning(f"   Precio: {real_order['price']}, Estado: {real_order['status']}")
+            
+            # 5. Limpiar posiciones marcadas
+            for ticket in list(self.active_positions.keys()):
+                if self.active_positions[ticket].get('needs_cleanup'):
+                    logger.info(f"🧹 LIMPIANDO posición fantasma: {ticket}")
+                    del self.active_positions[ticket]
+            
+            return True
+        
+        except Exception as e:
+            logger.error(f"❌ Error sincronizando posiciones: {e}")
             return False
 
     def _manage_open_positions(self):
@@ -805,6 +999,9 @@ class CCXTLiveTradingOrchestrator:
         La estrategia maneja trailing stops, stop loss y take profit.
         También actualiza dinámicamente el trailing stop cuando hay ganancias.
         """
+        # ✅ NUEVO: Sincronizar cada iteración
+        self.sync_positions_with_exchange()
+        
         positions_to_close = []
 
         for ticket, position in self.active_positions.items():
@@ -866,7 +1063,7 @@ class CCXTLiveTradingOrchestrator:
                 logger.warning(f"Posición {ticket} no encontrada en active_positions, no se puede cerrar")
                 continue
                 
-            if self.order_executor.close_position(ticket):
+            if self.order_executor.close_position_safe(ticket):
                 position = self.active_positions[ticket]
                 pnl = position.get('pnl', 0)
                 exit_reason = close_info.get('reason', 'unknown')
@@ -1171,7 +1368,7 @@ class CCXTLiveTradingOrchestrator:
         # Cerrar todas las posiciones abiertas
         for ticket in list(self.active_positions.keys()):
             logger.info(f"Cerrando posición abierta {ticket}")
-            self.order_executor.close_position(ticket)
+            self.order_executor.close_position_safe(ticket)
 
         # Guardar resultados
         self._save_trading_results()
@@ -1190,18 +1387,25 @@ class CCXTLiveTradingOrchestrator:
             bool: True si el sistema está saludable
         """
         try:
+            import gc
             issues = []
             
             # 1. Verificar conexión a exchange
             if not self.data_provider.is_connected():
                 issues.append("Conexión a exchange perdida")
             
-            # 2. Verificar uso de memoria
+            # 2. Verificar uso de memoria y limpiar si es necesario
             try:
                 import psutil
                 memory = psutil.virtual_memory()
                 if memory.percent > 85:
-                    issues.append(f"Uso de memoria alto: {memory.percent:.1f}%")
+                    # Memory crítica: limpiar garbage collector
+                    gc.collect()
+                    memory = psutil.virtual_memory()
+                    issues.append(f"Uso de memoria alto: {memory.percent:.1f}% (limpieza realizada)")
+                elif memory.percent > 80:
+                    # Memory alta: limpiar proactivamente
+                    gc.collect()
             except ImportError:
                 logger.debug("psutil no disponible para verificación de memoria")
             

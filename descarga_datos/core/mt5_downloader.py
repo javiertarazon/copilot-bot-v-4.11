@@ -8,6 +8,11 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from utils.logger import get_logger
+import os
+from pathlib import Path
+import yaml
+from types import SimpleNamespace
+from dotenv import load_dotenv
 
 # Flag para verificar disponibilidad de MT5
 MT5_AVAILABLE = False
@@ -23,6 +28,7 @@ class MT5Downloader:
     def __init__(self, config=None):
         """Inicializa el downloader de MT5"""
         self.logger = get_logger(__name__)
+        self.config = config
         self.connected = False
         self.max_retries = getattr(config, 'max_retries', 3) if hasattr(config, 'max_retries') else 3
         self.retry_delay = getattr(config, 'retry_delay', 5) if hasattr(config, 'retry_delay') else 5
@@ -338,3 +344,119 @@ class MT5Downloader:
 
         # Fallback: intentar formato directo
         return f"{base}{quote}"
+
+
+def _dict_to_obj(d: Any) -> Any:
+    """Convierte recursivamente dicts a SimpleNamespace para acceso con puntos."""
+    if isinstance(d, dict):
+        ns = SimpleNamespace()
+        for k, v in d.items():
+            setattr(ns, k, _dict_to_obj(v))
+        return ns
+    if isinstance(d, list):
+        return [_dict_to_obj(x) for x in d]
+    return d
+
+
+def run_download_from_config(
+    config_path: Optional[str] = None,
+    symbol: Optional[str] = None,
+    timeframe: str = "15m",
+    days: int = 365,
+    output_dir: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Helper que carga la configuración central y descarga datos desde MT5 usando MT5Downloader.
+
+    - Busca la config en `descarga_datos/config/config.yaml` por defecto.
+    - Carga variables de entorno desde `descarga_datos/.env` si existe.
+    - Descarga `days` días hasta hoy en el `timeframe` indicado y guarda CSV en `descarga_datos/data/csv/`.
+
+    Retorna la ruta al CSV si la descarga fue exitosa, o None si falló.
+    """
+    # Determinar paths por defecto
+    repo_root = Path(__file__).parent.parent
+    if config_path is None:
+        config_path = repo_root / "config" / "config.yaml"
+    else:
+        config_path = Path(config_path)
+
+    # Cargar .env si existe
+    env_path = repo_root / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+
+    # Cargar YAML
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config no encontrada en {config_path}")
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg_raw = yaml.safe_load(f)
+
+    cfg = _dict_to_obj(cfg_raw if cfg_raw else {})
+
+    # Determinar símbolo predeterminado si no pasa uno
+    if symbol is None:
+        try:
+            # Preferir lista de símbolos en config (buscar en backtesting.symbols y raíz)
+            if hasattr(cfg, 'backtesting') and hasattr(cfg.backtesting, 'symbols') and isinstance(cfg.backtesting.symbols, list) and len(cfg.backtesting.symbols) > 0:
+                symbol = cfg.backtesting.symbols[0]
+            elif hasattr(cfg, 'symbols') and isinstance(cfg.symbols, list) and len(cfg.symbols) > 0:
+                symbol = cfg.symbols[0]
+            elif hasattr(cfg, 'mt5') and hasattr(cfg.mt5, 'default_symbol'):
+                symbol = cfg.mt5.default_symbol
+        except Exception:
+            symbol = None
+
+    if symbol is None:
+        raise ValueError("No se pudo determinar el símbolo a descargar. Proporciona `symbol` o añade `symbols` en la config.")
+
+    # Preparar output dir
+    if output_dir is None:
+        output_dir = repo_root / "data" / "csv"
+    else:
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Inicializar downloader
+    downloader = MT5Downloader(config=cfg)
+    # Adjuntar config al downloader para compatibilidad con initialize()
+    downloader.config = cfg
+
+    ok = downloader.initialize()
+    if not ok:
+        downloader.logger.error("No fue posible inicializar MT5. Abortando descarga.")
+        return None
+
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=days)
+
+    downloader.logger.info(f"Descargando {symbol} desde {start_date} hasta {end_date} en {timeframe}")
+    df = downloader.download_symbol_data(symbol, timeframe, start_date.isoformat(), end_date.isoformat())
+
+    if df is None or df.empty:
+        downloader.logger.error("Descarga fallida: dataframe vacío")
+        downloader.shutdown()
+        return None
+
+    # Guardar CSV
+    safe_symbol = str(symbol).replace('/', '_').replace(' ', '_')
+    csv_name = f"{safe_symbol}_{timeframe}_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+    csv_path = output_dir / csv_name
+    df.to_csv(csv_path, index=False)
+    downloader.logger.info(f"Datos guardados en {csv_path}")
+
+    downloader.shutdown()
+    return str(csv_path)
+
+
+if __name__ == "__main__":
+    # Ejecución rápida local para desarrolladores: descarga 365 días del símbolo principal
+    try:
+        path = run_download_from_config()
+        if path:
+            print(f"CSV generado: {path}")
+        else:
+            print("No se generó CSV. Revisa logs.")
+    except Exception as e:
+        print(f"Error ejecutando downloader: {e}")

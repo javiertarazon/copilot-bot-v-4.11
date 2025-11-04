@@ -1,0 +1,123 @@
+=============================================
+  DASHBOARD BOT TRADER v4.7 - GUÍA RÁPIDA
+=============================================
+
+📊 CÓMO EJECUTAR EL DASHBOARD
+---------------------------------------------
+
+OPCIÓN 1: Desde Python (Recomendado)
+-------------------------------------
+cd descarga_datos
+python main.py --dashboard-only
+
+OPCIÓN 2: Usando el archivo .bat
+---------------------------------
+Doble clic en: descarga_datos/start_dashboard.bat
+
+OPCIÓN 3: Desde la raíz del proyecto
+-------------------------------------
+cd botcopilot-sar
+python descarga_datos/main.py --dashboard-only
+
+
+🌐 ACCESO AL DASHBOARD
+---------------------------------------------
+URL: http://localhost:8519
+
+El dashboard se abrirá automáticamente en tu navegador predeterminado.
+
+
+📋 CONTENIDO DEL DASHBOARD
+---------------------------------------------
+
+✅ Métricas Principales:
+   - P&L Total
+   - Total de Trades
+   - Win Rate
+   - Max Drawdown
+
+📈 Gráficos Incluidos:
+   1. Curva de Equity (Capital Progresivo)
+   2. Curva de Drawdown
+   3. Histograma de P&L
+   4. Box Plot de P&L (Outliers)
+   5. P&L Acumulado por Trade
+   6. Pie Chart Win/Loss Ratio
+   7. Histograma Comparativo Ganadores vs Perdedores
+
+📋 Tabla Completa de Trades:
+   - TODOS los trades (5,309 en el caso de BTC/USDT)
+   - Filtros por tipo (LONG/SHORT)
+   - Filtros por resultado (Ganadores/Perdedores)
+   - Control de filas mostradas (10, 25, 50, 100, Todos)
+   - Descarga en formato CSV
+
+🎯 Análisis de Rachas:
+   - Máxima racha ganadora
+   - Máxima racha perdedora
+   - Promedios de rachas
+
+📊 Métricas Adicionales:
+   - Métricas de Rentabilidad
+   - Métricas de Riesgo
+   - Ratios (Sharpe, Sortino, Calmar)
+
+
+🛠️ ARCHIVOS DEL DASHBOARD
+---------------------------------------------
+
+Archivo Principal:
+   descarga_datos/utils/dashboard.py
+
+Archivos de Datos:
+   descarga_datos/data/dashboard_results/BTC_USDT_results.json
+   descarga_datos/data/dashboard_results/global_summary.json
+
+Archivos Antiguos (Backup):
+   descarga_datos/utils/dashboard_old_backup.py
+
+
+📝 NOTAS IMPORTANTES
+---------------------------------------------
+
+1. El dashboard carga automáticamente los resultados del último backtest
+2. Si no hay datos, ejecuta primero: python main.py --backtest
+3. El dashboard se actualiza automáticamente al recargar la página
+4. Presiona Ctrl+C en la terminal para detener el dashboard
+5. El puerto 8519 debe estar libre para que funcione
+
+
+🔧 SOLUCIÓN DE PROBLEMAS
+---------------------------------------------
+
+Problema: "No se encontraron datos de backtesting"
+Solución: Ejecuta primero un backtest:
+          python main.py --backtest
+
+Problema: "Puerto 8519 en uso"
+Solución: El sistema buscará automáticamente un puerto libre (8520-8523)
+
+Problema: Dashboard no se abre
+Solución: Abre manualmente: http://localhost:8519
+
+
+💡 TIPS
+---------------------------------------------
+
+- Usa los filtros en la tabla para analizar trades específicos
+- Descarga el CSV para análisis en Excel o Python
+- Expande la sección JSON para ver todos los datos crudos
+- El dashboard funciona mejor en navegadores modernos (Chrome, Firefox, Edge)
+
+
+📧 SOPORTE
+---------------------------------------------
+
+Para más información sobre el sistema completo, consulta:
+   - descarga_datos/ARCHIVOS MD/README.md
+   - descarga_datos/ARCHIVOS MD/00_INDICE_MAESTRO_v4.md
+
+
+=============================================
+Bot Trader Copilot v4.7 - Sistema Modular
+=============================================

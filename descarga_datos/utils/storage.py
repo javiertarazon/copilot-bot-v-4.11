@@ -21,13 +21,22 @@ def _get_sqlite_type(dtype) -> str:
     # Timestamps and other objects will be stored as TEXT or INTEGER after conversion
     return "TEXT"
 
+def _escape_table_name(table_name: str) -> str:
+    """Escapa el nombre de tabla para SQL, usando comillas dobles si contiene espacios."""
+    if ' ' in table_name or '-' in table_name:
+        return f'"{table_name}"'
+    return table_name
+
 class DataStorage(BaseDataHandler):
     """Clase para el manejo de almacenamiento de datos."""
     
-    def __init__(self, db_path: str = "descarga_datos/data/data.db"):
+    def __init__(self, db_path: str = None):
         super().__init__()
+        # Si no se proporciona path, usar ruta relativa desde este archivo
+        if db_path is None:
+            db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'data.db')
         # Normalizar ruta: si comienza con "data/", cambiar a descarga_datos/data/
-        if db_path.startswith("data/"):
+        elif db_path.startswith("data/"):
             db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), db_path)
         self.db_path = db_path
         self._ensure_db_path()
@@ -183,8 +192,9 @@ class DataStorage(BaseDataHandler):
                             dtype = 'TEXT'
                         column_definitions.append(f"{col} {dtype}")
                     
+                    escaped_table = _escape_table_name(table_name)
                     create_table_sql = f"""
-                    CREATE TABLE IF NOT EXISTS {table_name} (
+                    CREATE TABLE IF NOT EXISTS {escaped_table} (
                         {', '.join(column_definitions)}
                     )
                     """
@@ -194,7 +204,7 @@ class DataStorage(BaseDataHandler):
                     
                     # Eliminar datos existentes si hay
                     try:
-                        delete_sql = f"DELETE FROM {table_name}"
+                        delete_sql = f"DELETE FROM {escaped_table}"
                         conn.execute(delete_sql)
                     except sqlite3.OperationalError:
                         pass  # La tabla no existe, lo cual está bien
@@ -229,8 +239,9 @@ class DataStorage(BaseDataHandler):
         try:
             # Si la tabla existe, eliminar sus datos
             if self.table_exists(table_name):
+                escaped_table = _escape_table_name(table_name)
                 with sqlite3.connect(self.db_path) as conn:
-                    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                    conn.execute(f"DROP TABLE IF EXISTS {escaped_table}")
             
             # Guardar los nuevos datos
             return self.save_to_sqlite(data, table_name)
@@ -283,7 +294,8 @@ class DataStorage(BaseDataHandler):
                 return pd.DataFrame()
 
             # Construir la consulta SQL
-            query = f"SELECT * FROM {table_name}"
+            escaped_table = _escape_table_name(table_name)
+            query = f"SELECT * FROM {escaped_table}"
             params = []
             
             if start_ts is not None and end_ts is not None:
@@ -462,8 +474,8 @@ def get_data_without_validation(self, symbol: str, timeframe: str, start_date: s
         pd.DataFrame o None si no hay datos
     """
     try:
-        # Generar nombre de tabla estándar
-        table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+        # Generar nombre de tabla estándar - eliminar espacios y caracteres especiales
+        table_name = f"{symbol.replace('/', '_').replace(':', '_').replace(' ', '_')}_{timeframe}"
         
         # Convertir fechas a timestamps si se proporcionan
         start_ts = None
@@ -545,8 +557,8 @@ def save_data_method(self, data: pd.DataFrame, symbol: str, timeframe: str):
     Método de compatibilidad para guardar datos con la interfaz esperada por main.py
     """
     try:
-        # Generar nombre de tabla estándar
-        table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+        # Generar nombre de tabla estándar - eliminar espacios y caracteres especiales
+        table_name = f"{symbol.replace('/', '_').replace(':', '_').replace(' ', '_')}_{timeframe}"
         
         # Usar save_data existente
         return self.save_data(table_name, data)
@@ -635,7 +647,7 @@ async def ensure_data_availability(symbol: str, timeframe: str = '4h',
     
     # 1. PRIMERO: Verificar SQLite (prioridad máxima)
     storage = DataStorage()
-    table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+    table_name = f"{symbol.replace('/', '_').replace(' ', '_')}_{timeframe}"
     
     try:
         sqlite_data = storage.get_data_without_validation(symbol, timeframe, start_date, end_date)
@@ -701,7 +713,8 @@ def _load_csv_data(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
         import os
         from pathlib import Path
         
-        csv_filename = f"{symbol.replace('/', '_')}_{timeframe}.csv"
+        # Normalizar nombre de símbolo: reemplazar espacios por guiones bajos
+        csv_filename = f"{symbol.replace('/', '_').replace(' ', '_')}_{timeframe}.csv"
         csv_path = Path(__file__).parent.parent / 'data' / 'csv' / csv_filename
         
         if csv_path.exists():

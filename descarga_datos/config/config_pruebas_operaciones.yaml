@@ -52,6 +52,11 @@ backtesting:
   symbol_selection:
     BTC/USDT: true
   
+  symbols:
+  - BTC/USDT
+  
+  timeframe: 15m
+  
   # ========== TIPO DE TRADING ==========
   # ⚠️ IMPORTANTE: Solo se permite MARGIN (apalancamiento) o FUTURES (perpetuos)
   # SPOT ha sido ELIMINADO del sistema - no es viable

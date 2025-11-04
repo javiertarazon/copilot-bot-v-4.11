@@ -436,9 +436,11 @@ class MT5OrderExecutor:
             return 0.0
 
     def open_position(self, symbol: str, order_type: OrderType, quantity: float = None,
+                     volume: float = None,
                      stop_loss_price: float = None, take_profit_price: float = None,
                      trailing_stop_pct: float = None, risk_per_trade: float = None,
-                     price: float = None, portfolio_value: float = None) -> Optional[Dict[str, Any]]:
+                     price: float = None, portfolio_value: float = None,
+                     comment: str = "") -> Optional[Dict[str, Any]]:
         """
         Abre una nueva posición usando parámetros de risk management proporcionados por la estrategia.
 
@@ -467,6 +469,13 @@ class MT5OrderExecutor:
                 if not current_price:
                     return None
                 price = current_price['ask'] if order_type == OrderType.BUY else current_price['bid']
+
+            # Si se proporciona 'volume' (alias usado por el orquestador), úsalo como quantity
+            if quantity is None and volume is not None:
+                try:
+                    quantity = float(volume)
+                except Exception:
+                    quantity = None
 
             # Si no se proporciona quantity, calcular basado en riesgo
             if quantity is None:
@@ -505,7 +514,7 @@ class MT5OrderExecutor:
 
             # Llamar al método original pero con manejo de errores mejorado
             try:
-                return self._open_position_mt5(symbol, order_type, quantity, price, sl, tp, "", 0)
+                return self._open_position_mt5(symbol, order_type, quantity, price, sl, tp, comment, 0)
             except OrderExecutionError as e:
                 self.logger.error(f"Error ejecutando orden MT5: {e.message}")
                 return {
@@ -897,15 +906,15 @@ class MT5OrderExecutor:
         return results
 
     def calculate_optimal_lot_size(
-        self, symbol: str, risk_percent: float, stop_loss_pips: float
+        self, symbol: str, risk_percent: float, stop_distance_points: float
     ) -> float:
         """
-        Calcula el tamaño de lote óptimo según el porcentaje de riesgo y SL.
+        Calcula el tamaño de lote óptimo según el porcentaje de riesgo y distancia del SL en puntos.
 
         Args:
             symbol: Símbolo
             risk_percent: Porcentaje de riesgo (1.0 = 1%)
-            stop_loss_pips: Distancia del SL en pips
+            stop_distance_points: Distancia del SL en puntos de precio
 
         Returns:
             Tamaño de lote óptimo
@@ -926,29 +935,43 @@ class MT5OrderExecutor:
                 self.logger.error(f"Símbolo {symbol} no encontrado")
                 return 0.01
 
-            # Calcular valor monetario de un pip
-            pip_value = symbol_info.trade_tick_value / symbol_info.trade_tick_size
+            # Calcular valor por pip/punto según el tipo de símbolo
+            if 'Volatility' in symbol or 'Synthetic' in symbol:
+                # Para índices sintéticos de Deriv, 1 punto = 1 USD
+                pip_value = 1.0
+                effective_stop = stop_distance_points
+            else:
+                # Para forex y otros, calcular normalmente
+                pip_value = symbol_info.trade_tick_value / symbol_info.trade_tick_size
+                effective_stop = stop_distance_points / symbol_info.trade_tick_size
 
             # Calcular balance arriesgado
             balance = account_info.balance
             risk_amount = balance * (risk_percent / 100)
 
             # Calcular tamaño de lote
-            lot_size = risk_amount / (stop_loss_pips * pip_value)
+            if effective_stop > 0 and pip_value > 0:
+                lot_size = risk_amount / (effective_stop * pip_value)
+            else:
+                lot_size = 0.01
 
             # Redondear al tamaño de lote mínimo
+            import math
             min_lot = symbol_info.volume_min
             lot_step = symbol_info.volume_step
 
-            # Redondear a múltiplo de lot_step
-            lot_size = round(lot_size / lot_step) * lot_step
+            # Redondear a múltiplo de lot_step, usando ceil para no redondear a 0
+            if lot_step > 0:
+                lot_size = math.ceil(lot_size / lot_step) * lot_step
+            else:
+                lot_size = max(min_lot, lot_size)
 
             # Asegurar que está entre min_lot y max_lot
             lot_size = max(min_lot, min(lot_size, symbol_info.volume_max))
 
             self.logger.info(
                 f"Tamaño de lote calculado para {symbol}: {lot_size:.2f} lotes "
-                f"(Riesgo: {risk_percent}%, SL: {stop_loss_pips} pips)"
+                f"(Riesgo: {risk_percent}%, SL: {effective_stop:.2f} puntos)"
             )
 
             return lot_size
@@ -1289,7 +1312,12 @@ class MT5OrderExecutor:
                 quantity = 0.01  # Mínimo por defecto
 
             # Limitar tamaño máximo de posición
-            max_lot = self.calculate_optimal_lot_size(symbol, risk_pct, entry_price, stop_loss)
+            # Calcular distancia del stop loss en puntos para el límite máximo
+            if stop_loss and stop_loss > 0:
+                stop_distance_points = abs(entry_price - stop_loss)
+                max_lot = self.calculate_optimal_lot_size(symbol, risk_pct, stop_distance_points)
+            else:
+                max_lot = 100.0  # Límite alto por defecto si no hay SL
             quantity = min(quantity, max_lot)
 
             # Asegurar mínimo
@@ -1311,7 +1339,63 @@ class MT5OrderExecutor:
 
         except Exception as e:
             self.logger.error(f"Error en apply_risk_management: {str(e)}")
-            return None
+            # Retornar valores por defecto en caso de error
+            return {
+                'quantity': 0.01,  # Mínimo lote
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'risk_amount': 0.0,
+                'risk_percent': risk_per_trade * 100 if risk_per_trade else 0.0,
+                'portfolio_value': portfolio_value or 10000
+            }
+
+    def _validate_sl_tp(self, symbol: str, order_type: str, price: float, sl: float, tp: float) -> Tuple[bool, str]:
+        """
+        Valida que Stop Loss y Take Profit sean válidos para la orden.
+        
+        Args:
+            symbol: Símbolo
+            order_type: 'BUY' o 'SELL'
+            price: Precio de entrada
+            sl: Precio de stop loss (0 si no está configurado)
+            tp: Precio de take profit (0 si no está configurado)
+            
+        Returns:
+            Tupla (is_valid, error_message)
+        """
+        # Si no hay SL/TP, es válido (órdenes sin stop)
+        if sl == 0.0 and tp == 0.0:
+            return True, ""
+        
+        # Validar que SL y TP sean diferentes al precio de entrada
+        min_distance = 0.0001  # Mínimo distance para evitar S/L o T/P en el mismo precio
+        
+        if sl != 0.0:
+            if order_type == 'BUY':
+                # Para BUY: SL debe estar DEBAJO del precio de entrada
+                if sl >= price - min_distance:
+                    return False, f"SL inválido: {sl} debe estar debajo del precio de entrada {price}"
+            else:  # SELL
+                # Para SELL: SL debe estar ARRIBA del precio de entrada
+                if sl <= price + min_distance:
+                    return False, f"SL inválido: {sl} debe estar arriba del precio de entrada {price}"
+        
+        if tp != 0.0:
+            if order_type == 'BUY':
+                # Para BUY: TP debe estar ARRIBA del precio de entrada
+                if tp <= price + min_distance:
+                    return False, f"TP inválido: {tp} debe estar arriba del precio de entrada {price}"
+            else:  # SELL
+                # Para SELL: TP debe estar DEBAJO del precio de entrada
+                if tp >= price - min_distance:
+                    return False, f"TP inválido: {tp} debe estar debajo del precio de entrada {price}"
+        
+        # Validar que SL y TP sean diferentes entre sí
+        if sl != 0.0 and tp != 0.0:
+            if abs(sl - tp) < min_distance:
+                return False, f"SL y TP no pueden estar al mismo nivel: {sl} vs {tp}"
+        
+        return True, ""
 
     def _open_position_mt5(self, symbol: str, order_type: OrderType, volume: float,
                           price: float = 0.0, sl: float = 0.0, tp: float = 0.0,
@@ -1361,6 +1445,7 @@ class MT5OrderExecutor:
             # Si es una orden de mercado y el precio es 0, obtener el precio actual
             symbol_info = mt5.symbol_info(symbol)
             if not symbol_info:
+                self.logger.error(f"❌ Símbolo {symbol} no encontrado en MT5")
                 return {
                     'success': False,
                     'message': f"Símbolo {symbol} no encontrado",
@@ -1369,43 +1454,103 @@ class MT5OrderExecutor:
 
             # Verificar que el símbolo esté disponible para trading
             if not symbol_info.visible:
+                self.logger.warning(f"⚠️ Símbolo {symbol} no visible, intentando habilitar...")
+                # Intentar habilitar el símbolo
+                if not mt5.symbol_select(symbol, True):
+                    self.logger.error(f"❌ No se pudo habilitar símbolo {symbol}")
+                    return {
+                        'success': False,
+                        'message': f"Símbolo {symbol} no visible y no se pudo habilitar",
+                        'error_code': -4
+                    }
+                # Obtener la info nuevamente
+                symbol_info = mt5.symbol_info(symbol)
+                if not symbol_info:
+                    return {
+                        'success': False,
+                        'message': f"Símbolo {symbol} no encontrado después de habilitar",
+                        'error_code': -1
+                    }
+                self.logger.info(f"✅ Símbolo {symbol} habilitado correctamente")
+            
+            # ✅ VALIDAR VOLUMEN: Ajustar a lote mínimo si es demasiado pequeño
+            min_lot = symbol_info.volume_min if hasattr(symbol_info, 'volume_min') else 0.01
+            max_lot = symbol_info.volume_max if hasattr(symbol_info, 'volume_max') else 100.0
+            
+            self.logger.info(f"📊 Lotes para {symbol}: Min={min_lot}, Max={max_lot}, Solicitado={volume}")
+            
+            # Si el volumen es menor al mínimo, ajustarlo al mínimo
+            if volume < min_lot:
+                self.logger.warning(f"⚠️ Volumen {volume} es menor al mínimo {min_lot}, ajustando a {min_lot}")
+                volume = min_lot
+            
+            # Si el volumen excede el máximo, limitarlo
+            if volume > max_lot:
+                self.logger.warning(f"⚠️ Volumen {volume} excede máximo {max_lot}, limitando a {max_lot}")
+                volume = max_lot
+            
+            # Obtener precio actual si no se proporciona
+            current_price = symbol_info.ask if order_type == OrderType.BUY else symbol_info.bid
+            actual_price = price if price > 0 else current_price
+            
+            # VALIDAR SL/TP ANTES DE ENVIAR LA ORDEN
+            is_valid_sl_tp, sl_tp_error = self._validate_sl_tp(
+                symbol, 
+                order_type.name,
+                actual_price,
+                sl,
+                tp
+            )
+            
+            if not is_valid_sl_tp:
+                self.logger.error(f"❌ Validación SL/TP fallida: {sl_tp_error}")
                 return {
                     'success': False,
-                    'message': f"Símbolo {symbol} no visible",
-                    'error_code': -4
+                    'message': f"Validación SL/TP fallida: {sl_tp_error}",
+                    'error_code': -7
                 }
+            
+            self.logger.info(f"✅ Validación SL/TP pasada: Precio={actual_price:.5f}, SL={sl:.5f}, TP={tp:.5f}")
 
             # Preparar la orden
             order_type_mt5 = mt5.ORDER_TYPE_BUY if order_type == OrderType.BUY else mt5.ORDER_TYPE_SELL
 
-            # Crear estructura de orden
+            # Crear estructura de orden - Validar que sea correcta
             order_request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
                 "volume": volume,
                 "type": order_type_mt5,
-                "price": price if price > 0 else symbol_info.ask if order_type == OrderType.BUY else symbol_info.bid,
-                "sl": sl,
-                "tp": tp,
-                "deviation": 10,  # Desviación permitida en puntos
-                "magic": magic,
-                "comment": comment,
-                "type_time": mt5.ORDER_TIME_GTC,  # Good till cancelled
-                "type_filling": mt5.ORDER_FILLING_IOC,  # Immediate or cancel
+                "price": price if price > 0 else (symbol_info.ask if order_type == OrderType.BUY else symbol_info.bid),
+                "sl": float(sl) if sl > 0 else 0.0,
+                "tp": float(tp) if tp > 0 else 0.0,
+                "deviation": 10,
+                "magic": int(magic),
+                "comment": str(comment),
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_FOK,  # Cambiar a FOK para mejor compatibilidad con Deriv
             }
+
+            self.logger.debug(f"[MT5 ORDER REQUEST] {order_request}")
 
             # Enviar la orden
             result = mt5.order_send(order_request)
 
             if result is None:
+                error_code = mt5.last_error()
+                error_msg = self._get_mt5_error_message(error_code) if error_code else "Error desconocido"
+                self.logger.error(f"[MT5 ORDER ERROR] order_send retornó None - Código: {error_code}, Mensaje: {error_msg}")
+                self.logger.error(f"[MT5 ORDER DEBUG] Request enviado: {order_request}")
                 return {
                     'success': False,
-                    'message': "Error desconocido en MT5",
-                    'error_code': -5
+                    'message': f"Error MT5: {error_msg}",
+                    'error_code': error_code
                 }
 
             if result.retcode != mt5.TRADE_RETCODE_DONE:
                 error_msg = self._get_mt5_error_message(result.retcode)
+                self.logger.error(f"[MT5 ORDER ERROR] Código de retorno: {result.retcode}, Mensaje: {error_msg}")
+                self.logger.error(f"[MT5 ORDER DEBUG] Result object: {result}")
                 return {
                     'success': False,
                     'message': f"Error MT5: {error_msg}",
@@ -1428,6 +1573,324 @@ class MT5OrderExecutor:
                 'message': str(e),
                 'error_code': -6
             }
+
+    def get_open_positions(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene todas las posiciones abiertas desde MT5.
+        Método requerido por PositionSynchronizer para sincronización.
+
+        Returns:
+            Lista de posiciones abiertas formateadas
+        """
+        if not self.ensure_connection():
+            self.logger.error("[MT5] No hay conexión para obtener posiciones")
+            return []
+
+        try:
+            # Obtener posiciones desde MT5
+            positions = mt5.positions_get()
+
+            if positions is None:
+                self.logger.warning("[MT5] No se pudieron obtener posiciones")
+                return []
+
+            # Formatear posiciones para compatibilidad
+            formatted_positions = []
+            for pos in positions:
+                formatted_pos = {
+                    'ticket': pos.ticket,
+                    'symbol': pos.symbol,
+                    'type': 'buy' if pos.type == mt5.POSITION_TYPE_BUY else 'sell',
+                    'volume': pos.volume,
+                    'price': pos.price_open,
+                    'sl': getattr(pos, 'sl', 0.0),
+                    'tp': getattr(pos, 'tp', 0.0),
+                    'profit': getattr(pos, 'profit', 0.0),
+                    'swap': getattr(pos, 'swap', 0.0),
+                    'commission': getattr(pos, 'commission', 0.0),
+                    'time': getattr(pos, 'time', None),
+                    'magic': getattr(pos, 'magic', 0),
+                    'comment': getattr(pos, 'comment', '')
+                }
+                formatted_positions.append(formatted_pos)
+
+            self.logger.debug(f"[MT5] Obtenidas {len(formatted_positions)} posiciones abiertas")
+            return formatted_positions
+
+        except Exception as e:
+            self.logger.error(f"[MT5] Error obteniendo posiciones abiertas: {str(e)}")
+            return []
+
+    def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtiene información de la posición abierta para un símbolo específico.
+
+        Args:
+            symbol: Símbolo a consultar
+
+        Returns:
+            Diccionario con información de la posición o None si no hay posición
+        """
+        if not self.ensure_connection():
+            self.logger.error(f"[MT5] No hay conexión para obtener posición de {symbol}")
+            return None
+
+        try:
+            # Obtener todas las posiciones
+            positions = mt5.positions_get(symbol=symbol)
+
+            if positions is None or len(positions) == 0:
+                # No hay posiciones abiertas para este símbolo
+                return None
+
+            # Si hay múltiples posiciones, devolver la más reciente
+            # (en la práctica, MT5 normalmente tiene una posición por símbolo)
+            position = positions[-1]  # Última posición
+
+            # Formatear para compatibilidad con el orquestador
+            formatted_position = {
+                'ticket': position.ticket,
+                'symbol': position.symbol,
+                'type': 'buy' if position.type == mt5.POSITION_TYPE_BUY else 'sell',
+                'volume': position.volume,
+                'price': position.price_open,
+                'sl': getattr(position, 'sl', 0.0),
+                'tp': getattr(position, 'tp', 0.0),
+                'profit': getattr(position, 'profit', 0.0),
+                'swap': getattr(position, 'swap', 0.0),
+                'commission': getattr(position, 'commission', 0.0),
+                'time': position.time,
+                'magic': getattr(position, 'magic', 0),
+                'comment': getattr(position, 'comment', '')
+            }
+
+            self.logger.debug(f"[MT5] Posición encontrada para {symbol}: {formatted_position['type']} {formatted_position['volume']}")
+            return formatted_position
+
+        except Exception as e:
+            self.logger.error(f"[MT5] Error obteniendo posición para {symbol}: {str(e)}")
+            return None
+
+    def close_position(self, symbol: str, volume: float = None, ticket: int = None) -> Dict[str, Any]:
+        """
+        Cierra una posición abierta para un símbolo específico.
+
+        Args:
+            symbol: Símbolo de la posición a cerrar
+            volume: Volumen específico a cerrar (opcional, cierra todo si None)
+            ticket: Ticket específico de la posición (opcional)
+
+        Returns:
+            Dict con resultado de la operación
+        """
+        if not self.ensure_connection():
+            return {
+                'success': False,
+                'message': 'No hay conexión con MT5',
+                'error_code': -2
+            }
+
+        try:
+            # Si se proporciona ticket específico, cerrar esa posición
+            if ticket:
+                positions = mt5.positions_get(ticket=ticket)
+            else:
+                # Obtener posiciones para el símbolo
+                positions = mt5.positions_get(symbol=symbol)
+
+            if positions is None or len(positions) == 0:
+                return {
+                    'success': False,
+                    'message': f'No hay posiciones abiertas para {symbol}',
+                    'error_code': -1
+                }
+
+            # Cerrar la primera posición encontrada (o la especificada por ticket)
+            position = positions[0]
+
+            # Determinar tipo de orden de cierre (opuesta a la posición)
+            if position.type == mt5.POSITION_TYPE_BUY:
+                order_type = mt5.ORDER_TYPE_SELL
+                price = mt5.symbol_info(symbol).bid
+            else:
+                order_type = mt5.ORDER_TYPE_BUY
+                price = mt5.symbol_info(symbol).ask
+
+            # Volumen a cerrar
+            close_volume = volume if volume else position.volume
+
+            # Crear orden de cierre
+            close_request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": close_volume,
+                "type": order_type,
+                "position": position.ticket,
+                "price": price,
+                "deviation": 10,
+                "magic": 0,
+                "comment": "Close position",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+
+            # Enviar orden de cierre
+            result = mt5.order_send(close_request)
+
+            if result is None:
+                error_code = mt5.last_error()
+                return {
+                    'success': False,
+                    'message': f'Error al cerrar posición: {error_code}',
+                    'error_code': error_code
+                }
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                error_msg = self._get_mt5_error_message(result.retcode)
+                return {
+                    'success': False,
+                    'message': f'Cierre rechazado: {error_msg}',
+                    'error_code': result.retcode
+                }
+
+            # Éxito
+            self.logger.info(f"Posición cerrada para {symbol}: ticket {position.ticket}, volumen {close_volume}")
+
+            return {
+                'success': True,
+                'message': f'Posición cerrada correctamente',
+                'position': {
+                    'ticket': position.ticket,
+                    'symbol': symbol,
+                    'volume_closed': close_volume,
+                    'price': result.price,
+                    'profit': position.profit
+                }
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error cerrando posición para {symbol}: {str(e)}")
+            return {
+                'success': False,
+                'message': str(e),
+                'error_code': -3
+            }
+
+    def _get_mt5_error_message(self, retcode: int) -> str:
+        """
+        Convierte códigos de retorno de MT5 en mensajes de error legibles.
+
+        Args:
+            retcode: Código de retorno de MT5
+
+        Returns:
+            str: Mensaje de error descriptivo
+        """
+        error_messages = {
+            # Códigos de éxito
+            10009: "Operación completada exitosamente",
+
+            # Códigos de error comunes
+            10004: "Requote - Precio cambió, intentar nuevamente",
+            10006: "Orden rechazada por el broker",
+            10007: "Orden cancelada",
+            10008: "Orden colocada pero no ejecutada",
+            10010: "Solicitud inválida",
+            10011: "Operación comercial deshabilitada",
+            10012: "Mercado cerrado",
+            10013: "No hay suficientes derechos para ejecutar la operación",
+            10014: "Mercados inactivos",
+            10015: "No hay memoria para ejecutar la solicitud",
+            10016: "Sistema ocupado, intentar más tarde",
+            10017: "Caducidad inválida",
+            10018: "Formato de precio inválido",
+            10019: "No hay suficiente dinero para completar la operación",
+            10020: "Precios cambiaron",
+            10021: "No hay precios disponibles",
+            10022: "Precio inválido",
+            10023: "Stop loss o take profit inválido",
+            10024: "Orden inválida",
+            10025: "Volumen inválido",
+            10026: "No hay posiciones para cerrar",
+            10027: "Total de posiciones abiertas excedido",
+            10028: "Lote mínimo excedido",
+            10029: "Lote máximo excedido",
+            10030: "No hay operaciones pendientes",
+            10031: "Operación comercial bloqueada",
+            10032: "Solo posiciones largas permitidas",
+            10033: "Solo posiciones cortas permitidas",
+            10034: "Cierre de posiciones cerrado",
+            10035: "Solo posiciones de cierre permitidas",
+            10036: "Posición no encontrada",
+            10037: "Límite de órdenes pendientes excedido",
+            10038: "Límite de órdenes por día excedido",
+            10039: "Posición no puede ser cerrada",
+            10040: "Precio fuera del mercado",
+            10041: "No hay conexión con el servidor",
+            10042: "Operación no permitida",
+            10043: "Demasiadas solicitudes",
+            10044: "Error de verificación",
+            10045: "Datos inválidos",
+            10046: "Error interno del servidor",
+            10047: "Error de validación",
+            10048: "Error de trading",
+            10049: "Error de margen",
+            10050: "Error de liquidez"
+        }
+
+        return error_messages.get(retcode, f"Error MT5 desconocido (código: {retcode})")
+
+    def get_positions(self, symbol: str = None) -> List[Dict[str, Any]]:
+        """
+        Obtiene posiciones abiertas, opcionalmente filtradas por símbolo.
+
+        Args:
+            symbol: Símbolo específico (opcional, None = todas)
+
+        Returns:
+            Lista de posiciones formateadas
+        """
+        if not self.ensure_connection():
+            self.logger.error("[MT5] No hay conexión para obtener posiciones")
+            return []
+
+        try:
+            # Obtener posiciones desde MT5
+            if symbol:
+                positions = mt5.positions_get(symbol=symbol)
+            else:
+                positions = mt5.positions_get()
+
+            if positions is None:
+                return []
+
+            # Formatear posiciones
+            formatted_positions = []
+            for pos in positions:
+                formatted_pos = {
+                    'ticket': getattr(pos, 'ticket', None),
+                    'symbol': getattr(pos, 'symbol', None),
+                    'type': getattr(pos, 'type', None),  # 0=BUY, 1=SELL (MT5 native)
+                    'type_str': 'buy' if getattr(pos, 'type', None) == mt5.POSITION_TYPE_BUY else 'sell',
+                    'volume': getattr(pos, 'volume', 0.0),
+                    'price_open': getattr(pos, 'price_open', 0.0),
+                    'price_current': getattr(pos, 'price_current', getattr(pos, 'price_open', 0.0)),
+                    'sl': getattr(pos, 'sl', 0.0),
+                    'tp': getattr(pos, 'tp', 0.0),
+                    'profit': getattr(pos, 'profit', 0.0),
+                    'swap': getattr(pos, 'swap', 0.0),
+                    'commission': getattr(pos, 'commission', 0.0),
+                    'time': getattr(pos, 'time', None),
+                    'magic': getattr(pos, 'magic', 0),
+                    'comment': getattr(pos, 'comment', '')
+                }
+                formatted_positions.append(formatted_pos)
+
+            return formatted_positions
+
+        except Exception as e:
+            self.logger.error(f"[MT5] Error obteniendo posiciones: {str(e)}")
+            return []
 
     def __del__(self):
         """

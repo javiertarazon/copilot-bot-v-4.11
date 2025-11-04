@@ -21,6 +21,7 @@ from core.downloader import AdvancedDataDownloader
 # Las estrategias se importan dinámicamente en load_strategies_from_config() usando __import__.
 from backtesting.backtester import AdvancedBacktester
 from utils.logger import setup_logging, get_logger
+import pandas as pd
 
 # Variable global para las estrategias disponibles
 # 🎯 SISTEMA COMPLETO - Estrategia principal con ML real + estrategia de pruebas
@@ -141,14 +142,41 @@ async def run_full_backtesting_with_batches():
         setup_logging(config.system.log_level, config.system.log_file)
         logger = get_logger(__name__)
 
-        # Inicializar downloader
+        # Inicializar downloader (con tolerancia a fallos si ya hay datos)
         downloader = AdvancedDataDownloader(config)
         success = await downloader.initialize()
         if not success:
-            print("[BACKTEST] ❌ Error inicializando downloader")
-            return
+            print("[BACKTEST] ⚠️  Downloader no inicializado - verificando datos existentes...")
 
-        print("[BACKTEST] ✅ Downloader inicializado (con soporte para lotes)")
+            # Verificar si ya tenemos datos suficientes en SQLite
+            from utils.storage import DataStorage
+            storage = DataStorage()
+            data_available = True
+
+            for symbol in config.backtesting.symbols:
+                try:
+                    table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{config.backtesting.timeframe}"
+                    existing_data = storage.query_data(table_name, None, None)
+                    if existing_data is None or len(existing_data) < 1000:  # Mínimo 1000 velas
+                        data_available = False
+                        print(f"[BACKTEST] ❌ Datos insuficientes para {symbol} en SQLite")
+                        break
+                    else:
+                        print(f"[BACKTEST] ✅ Datos existentes encontrados para {symbol}: {len(existing_data)} filas")
+                except Exception as e:
+                    print(f"[BACKTEST] ❌ Error verificando datos existentes para {symbol}: {e}")
+                    data_available = False
+                    break
+
+            if not data_available:
+                print("[BACKTEST] ❌ No hay datos suficientes disponibles y downloader falló")
+                return
+            else:
+                print("[BACKTEST] ✅ Usando datos existentes - continuando sin downloader")
+                # Continuar con datos existentes
+                return await run_backtest_with_existing_data(config)
+        else:
+            print("[BACKTEST] ✅ Downloader inicializado (con soporte para lotes)")
 
         # Descargar datos con lotes
         # Overrides rápidos desde CLI (variables de entorno configuradas en main.py)
@@ -248,6 +276,9 @@ async def run_full_backtesting_with_batches():
         # Procesamiento secuencial optimizado
         backtest_results = {}
         total_trades_global = 0
+
+        print(f"[DEBUG] Antes del bucle: processed_symbol_data tiene {len(processed_symbol_data)} items")
+        print(f"[DEBUG] Contenido: {list(processed_symbol_data.keys())}")
 
         for symbol_idx, (symbol, df) in enumerate(processed_symbol_data.items(), 1):
             print(f"\n[BACKTEST] 📈 [{symbol_idx}/{len(processed_symbol_data)}] PROCESANDO: {symbol}")
@@ -443,6 +474,259 @@ async def run_full_backtesting_with_batches():
 
         await downloader.shutdown()
         print("[BACKTEST] ✅ Backtesting completado exitosamente con descargas por lotes")
+
+    except Exception as e:
+        print(f"[BACKTEST] ❌ Error general: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def save_backtest_results(backtest_results, config):
+    """
+    Guarda los resultados del backtesting en formato JSON para el dashboard
+    """
+    try:
+        import json
+        from pathlib import Path
+
+        # Directorio de salida para dashboard
+        out_dir = Path(__file__).parent.parent / "data" / "dashboard_results"
+
+        # Limpiar resultados antiguos
+        if out_dir.exists():
+            for old in out_dir.glob("*.json"):
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Guardar por símbolo
+        for symbol, strategies in backtest_results.items():
+            safe_symbol = symbol.replace("/", "_").replace(":", "_")
+            file_path = out_dir / f"{safe_symbol}_results.json"
+
+            # Convertir tipos numpy a nativos de Python
+            def convert_to_native(obj):
+                import numpy as np
+                from datetime import datetime
+                import pandas as pd
+
+                if isinstance(obj, dict):
+                    # Para el dashboard, incluir métricas principales y trades simplificados
+                    result = {}
+                    for k, v in obj.items():
+                        # Excluir datos pesados que no necesita el dashboard
+                        if k in ['compensation_trades_data']:
+                            continue  # No incluir datos de compensación
+                        elif k == 'trades':
+                            # Convertir trades a formato serializable, excluyendo campos problemáticos
+                            if isinstance(v, list) and len(v) > 0:
+                                simplified_trades = []
+                                for trade in v:
+                                    if isinstance(trade, dict):
+                                        simplified_trade = {}
+                                        for trade_k, trade_v in trade.items():
+                                            # Excluir campos que causan problemas de serialización
+                                            if trade_k not in ['entry_time', 'exit_time', 'ml_confidence', 'atr_at_entry']:
+                                                if isinstance(trade_v, (datetime, pd.Timestamp)):
+                                                    simplified_trade[trade_k] = trade_v.isoformat()
+                                                elif isinstance(trade_v, (np.int64, np.int32, np.float64, np.float32)):
+                                                    simplified_trade[trade_k] = float(trade_v) if '.' in str(trade_v) else int(trade_v)
+                                                else:
+                                                    simplified_trade[trade_k] = convert_to_native(trade_v)
+                                        simplified_trades.append(simplified_trade)
+                                result[k] = simplified_trades
+                        elif k == 'equity_curve':
+                            # Convertir equity_curve a lista serializable
+                            if isinstance(v, (list, np.ndarray)):
+                                result[k] = [float(x) for x in v]
+                            elif hasattr(v, 'tolist'):
+                                result[k] = [float(x) for x in v.tolist()]
+                            else:
+                                result[k] = []
+                        else:
+                            result[k] = convert_to_native(v)
+                    return result
+                elif isinstance(obj, list):
+                    return [convert_to_native(item) for item in obj]
+                elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+                    return int(obj)
+                elif isinstance(obj, (np.float64, np.float32)):
+                    return float(obj)
+                elif isinstance(obj, (datetime, pd.Timestamp)):
+                    return obj.isoformat()  # Convertir timestamps a string ISO
+                elif hasattr(obj, 'timestamp'):  # Otro tipo de timestamp
+                    try:
+                        return obj.timestamp()
+                    except:
+                        return str(obj)
+                else:
+                    return obj
+
+            strategies_native = convert_to_native(strategies)
+
+            print(f"[BACKTEST] 💾 Guardando resultados para {symbol}: {len(strategies_native)} estrategias")
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump({'symbol': symbol, 'strategies': strategies_native}, f, indent=2, ensure_ascii=False)
+
+        print(f"[BACKTEST] ✅ Resultados guardados en {out_dir}")
+
+    except Exception as e:
+        print(f"[BACKTEST] ❌ Error guardando resultados: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def run_backtest_with_existing_data(config):
+    """
+    Ejecuta backtesting usando datos existentes en SQLite cuando el downloader falla
+    """
+    print("[BACKTEST] 🔄 BACKTESTING CON DATOS EXISTENTES")
+    print("=" * 60)
+
+    try:
+        # Cargar datos existentes desde SQLite
+        from utils.storage import DataStorage
+        storage = DataStorage()
+
+        processed_symbol_data = {}
+        total_velas = 0
+
+        for symbol in config.backtesting.symbols:
+            try:
+                print(f"[BACKTEST] 📥 Cargando datos existentes para {symbol}...")
+                table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{config.backtesting.timeframe}"
+                print(f"[DEBUG] Buscando tabla: {table_name}")
+                df = storage.query_data(table_name, None, None)
+                print(f"[DEBUG] query_data devolvió: {type(df)}, len: {len(df) if df is not None else 'None'}")
+
+                if df is not None and not df.empty:
+                    # Asegurar que el índice sea timestamp
+                    if 'timestamp' in df.columns:
+                        df['timestamp'] = pd.to_datetime(df['timestamp'])
+                        df.set_index('timestamp', inplace=True)
+
+                    processed_symbol_data[symbol] = df
+                    velas = len(df)
+                    total_velas += velas
+
+                    # Calcular período disponible
+                    min_date = df.index.min().strftime("%Y-%m-%d") if not df.empty else "N/A"
+                    max_date = df.index.max().strftime("%Y-%m-%d") if not df.empty else "N/A"
+
+                    print(f"[BACKTEST] ✅ {symbol}: {velas:,} velas cargadas | {min_date} → {max_date}")
+                else:
+                    print(f"[BACKTEST] ❌ No se pudieron cargar datos para {symbol}")
+                    continue
+
+            except Exception as e:
+                print(f"[BACKTEST] ❌ Error cargando datos para {symbol}: {e}")
+                continue
+
+        if not processed_symbol_data:
+            print("[BACKTEST] ❌ No se pudieron cargar datos para ningún símbolo")
+            return
+
+        print(f"[BACKTEST] 📊 Datos cargados: {len(processed_symbol_data)} símbolos, {total_velas:,} velas totales")
+
+        # Ejecutar backtesting con datos existentes
+        print(f"\n[BACKTEST] 🔄 Iniciando backtesting con datos existentes...")
+
+        # Cargar estrategias activas
+        active_strategies = load_strategies_from_config(config)
+        if not active_strategies:
+            print("[BACKTEST] ❌ ERROR: No hay estrategias activas configuradas")
+            return
+
+        print(f"[BACKTEST] 🎯 Estrategias activas: {list(active_strategies.keys())}")
+
+        # Procesamiento secuencial
+        backtest_results = {}
+        total_trades_global = 0
+
+        for symbol_idx, (symbol, df) in enumerate(processed_symbol_data.items(), 1):
+            print(f"\n[BACKTEST] 📈 [{symbol_idx}/{len(processed_symbol_data)}] PROCESANDO: {symbol}")
+            print("-" * 70)
+
+            try:
+                symbol_results = {}
+                symbol_total_trades = 0
+
+                for strategy_name, strategy in active_strategies.items():
+                    print(f"[BACKTEST] ⚡ Ejecutando {strategy_name}...")
+
+                    try:
+                        # Crear backtester
+                        strategy_backtester = AdvancedBacktester()
+
+                        # Configurar parámetros
+                        if hasattr(strategy_backtester, 'configure'):
+                            strategy_backtester.configure({
+                                'initial_capital': config.backtesting.initial_capital,
+                                'commission': config.backtesting.commission,
+                                'slippage': config.backtesting.slippage
+                            })
+
+                        # Ejecutar estrategia
+                        result = strategy_backtester.run(strategy, df, symbol, config.backtesting.timeframe)
+
+                        if result:
+                            symbol_results[strategy_name] = result
+                            trades = result.get('total_trades', 0)
+                            symbol_total_trades += trades
+                            pnl = result.get('total_pnl', 0)
+                            win_rate = result.get('win_rate', 0) * 100
+
+                            print(f"[BACKTEST] ✅ {strategy_name}: {trades} trades | P&L: ${pnl:.2f} | Win Rate: {win_rate:.1f}%")
+                        else:
+                            print(f"[BACKTEST] ❌ {strategy_name}: Sin resultados")
+
+                    except Exception as e:
+                        print(f"[BACKTEST] ❌ Error en {strategy_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
+
+                # Resultados del símbolo
+                if symbol_results:
+                    backtest_results[symbol] = symbol_results
+                    total_trades_global += symbol_total_trades
+                    print(f"[BACKTEST] 📊 {symbol} COMPLETADO: {symbol_total_trades} trades totales")
+                else:
+                    print(f"[BACKTEST] ❌ {symbol}: Sin resultados válidos")
+
+            except Exception as e:
+                print(f"[BACKTEST] ❌ Error procesando {symbol}: {e}")
+                continue
+
+        # Resultados finales
+        print(f"\n[BACKTEST] 🏆 RESULTADOS FINALES - BACKTESTING CON DATOS EXISTENTES")
+        print("=" * 80)
+        print(f"[BACKTEST] 📊 Símbolos procesados: {len(backtest_results)}")
+        print(f"[BACKTEST] 📊 Total operaciones: {total_trades_global}")
+
+        if backtest_results:
+            print(f"\n[BACKTEST] 📈 DETALLE POR ESTRATEGIA:")
+            print("-" * 80)
+            print(f"{'Símbolo':<12} {'Estrategia':<20} {'Trades':<8} {'P&L':<12} {'Win Rate':<10}")
+            print("-" * 80)
+
+            for symbol, strategies in backtest_results.items():
+                for strategy_name, result in strategies.items():
+                    trades = result.get('total_trades', 0)
+                    pnl = result.get('total_pnl', 0)
+                    win_rate = result.get('win_rate', 0) * 100
+
+                    print(f"{symbol:<12} {strategy_name:<20} {trades:<8} ${pnl:<11.2f} {win_rate:<9.1f}%")
+
+            # Guardar resultados
+            await save_backtest_results(backtest_results, config)
+
+            print(f"\n[BACKTEST] 💾 Resultados guardados en dashboard_results/")
+            print(f"[BACKTEST] 📊 Para ver resultados: python main.py --dashboard-only")
+
+        print("[BACKTEST] ✅ Backtesting completado exitosamente con datos existentes")
 
     except Exception as e:
         print(f"[BACKTEST] ❌ Error general: {e}")

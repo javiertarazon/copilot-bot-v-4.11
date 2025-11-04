@@ -44,15 +44,32 @@ class ModelManager:
         """Crear directorio de modelos si no existe"""
         os.makedirs(self.base_dir, exist_ok=True)
 
+    @staticmethod
+    def sanitize_symbol(symbol: str) -> str:
+        """
+        Sanitizar símbolo para crear nombres de directorio válidos
+        
+        Args:
+            symbol: Símbolo original (ej: "SOL/USDT:USDT")
+            
+        Returns:
+            str: Símbolo sanitizado (ej: "SOL_USDT_USDT")
+        """
+        # Reemplazar caracteres inválidos para nombres de directorio
+        sanitized = symbol.replace('/', '_').replace(':', '_').replace('-', '_')
+        return sanitized
+
     def get_model_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del modelo para un símbolo específico"""
-        symbol_dir = os.path.join(self.base_dir, symbol)
+        sanitized_symbol = self.sanitize_symbol(symbol)
+        symbol_dir = os.path.join(self.base_dir, sanitized_symbol)
         os.makedirs(symbol_dir, exist_ok=True)
         return os.path.join(symbol_dir, f"{model_name}.pkl")
 
     def get_scaler_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del scaler para un símbolo específico"""
-        symbol_dir = os.path.join(self.base_dir, symbol)
+        sanitized_symbol = self.sanitize_symbol(symbol)
+        symbol_dir = os.path.join(self.base_dir, sanitized_symbol)
         os.makedirs(symbol_dir, exist_ok=True)
         return os.path.join(symbol_dir, f"{model_name}_scaler.pkl")
 

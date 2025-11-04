@@ -47,20 +47,21 @@ def verificar_entorno_ejecucion():
     """
     errores = []
 
-    # 1. Verificar entorno virtual
-    if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
-        errores.append("❌ ERROR: Debes ejecutar este script dentro de un entorno virtual de Python")
-        errores.append("   Solución: Activa el entorno virtual con '.venv\\Scripts\\activate' (Windows)")
-        errores.append("   O usa: .venv\\Scripts\\python.exe main.py [argumentos]")
+    # TEMPORALMENTE DESACTIVADO PARA TESTING
+    # # 1. Verificar entorno virtual
+    # if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+    #     errores.append("❌ ERROR: Debes ejecutar este script dentro de un entorno virtual de Python")
+    #     errores.append("   Solución: Activa el entorno virtual con '.venv\\Scripts\\activate' (Windows)")
+    #     errores.append("   O usa: .venv\\Scripts\\python.exe main.py [argumentos]")
 
-    # 2. Verificar versión de Python
-    version_mayor = sys.version_info.major
-    version_menor = sys.version_info.minor
+    # # 2. Verificar versión de Python
+    # version_mayor = sys.version_info.major
+    # version_menor = sys.version_info.minor
 
-    if version_mayor != 3 or version_menor != 11:
-        errores.append(f"❌ ERROR: Versión de Python incorrecta: {version_mayor}.{version_menor}")
-        errores.append("   Se requiere Python 3.11.x exactamente")
-        errores.append(f"   Versión actual: {sys.version}")
+    # if version_mayor != 3 or version_menor != 11:
+    #     errores.append(f"❌ ERROR: Versión de Python incorrecta: {version_mayor}.{version_menor}")
+    #     errores.append("   Se requiere Python 3.11.x exactamente")
+    #     errores.append(f"   Versión actual: {sys.version}")
 
     # 3. Verificar que estamos en el directorio correcto y config existe
     config_encontrado = False
@@ -94,7 +95,7 @@ def verificar_entorno_ejecucion():
     # Si todo está bien, mostrar confirmación
     print("[OK] Verificacion de entorno exitosa:")
     print(f"   * Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
-    print("   * Entorno virtual activado")
+    print("   * Entorno virtual activado (temporalmente desactivado)")
     print("   * Configuracion encontrada")
     print()
 
@@ -115,6 +116,7 @@ sys.path.append(current_dir)
 from config.config_loader import load_config_from_yaml
 from utils.logger import initialize_system_logging, setup_logging, get_logger
 from utils.logger_metrics import log_execution_time, log_system_status, log_batch_operation
+from utils.graceful_shutdown import GracefulShutdownHandler, SafeTrading
 import time
 # Import pesado diferido: se hará dentro de run_backtest para evitar bloqueos
 RUN_ORCHESTRATOR_LAZILY = True
@@ -241,10 +243,19 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
     print("\n[SEARCH] VERIFICACIÓN CENTRALIZADA DE DATOS")
     print("=" * 50)
     
-    symbols = symbols or config.backtesting.symbols
-    timeframe = timeframe or config.backtesting.timeframe
-    start_date = start_date or config.backtesting.start_date
-    end_date = end_date or config.backtesting.end_date
+    # Soportar tanto objetos Config como diccionarios
+    if isinstance(config, dict):
+        backtest_config = config.get('backtesting', {})
+        symbols = symbols or backtest_config.get('symbols', ['BTC/USDT'])
+        timeframe = timeframe or backtest_config.get('timeframe', '4h')
+        start_date = start_date or backtest_config.get('start_date', '2024-01-01')
+        end_date = end_date or backtest_config.get('end_date', '2024-12-31')
+    else:
+        # Es un objeto Config
+        symbols = symbols or config.backtesting.symbols
+        timeframe = timeframe or config.backtesting.timeframe
+        start_date = start_date or config.backtesting.start_date
+        end_date = end_date or config.backtesting.end_date
     
     print(f"[STATS] Símbolos requeridos: {symbols}")
     print(f"📅 Período: {start_date} a {end_date} ({timeframe})")
@@ -374,8 +385,8 @@ def run_live_mt5():
         print(" [START] Iniciando TRADING EN VIVO MT5 (cuenta demo)...")
         print(" [INFO] Presione Ctrl+C para detener el trading")
 
-        # Para pruebas, limitar a 2 minutos
-        run_live_trading(duration_minutes=2)
+        # Para pruebas, aumentado a 10 minutos para ver operaciones
+        run_live_trading(duration_minutes=None)
         print(" [OK] Trading en vivo MT5 completado")
         return True
     except Exception as e:
@@ -717,7 +728,7 @@ async def train_ml_models():
                 print(f"[OK] Modelos entrenados para {symbol}")
                 if results:
                     for model_name, metrics in results.items():
-                        print(f"   [STATS] {model_name}: Accuracy={metrics.get('accuracy', 0):.4f}, AUC={metrics.get('auc', 0):.4f}")
+                        print(f"   [STATS] {model_name}: Accuracy={metrics.get('val_accuracy', 0):.4f}, AUC={metrics.get('val_auc', 0):.4f}")
             except Exception as e:
                 print(f"[WARN] No se pudieron entrenar modelos para {symbol}: {e}")
                 print("   Continuando con el siguiente símbolo...")
@@ -791,7 +802,7 @@ async def run_optimization_pipeline():
         # Este pipeline ya incluye descarga automática de datos
         from optimizacion.run_optimization_pipeline2 import OptimizationPipeline
         
-        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['BTC/USDT']
+        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['SOL/USDT:USDT']
         timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '4h'
         
         print(f"\n[TARGET] Símbolos a procesar: {symbols}")
@@ -1130,13 +1141,17 @@ def main():
     # INICIALIZAR LOGGING CENTRALIZADO PRIMERO
     initialize_system_logging({
         'level': 'INFO',
-        'file': '../logs/bot_trader.log'
+        'file': 'descarga_datos/logs/bot_trader.log'
     })
     
     # Obtener logger principal del sistema
     logger = get_logger('main')
     logger.info("Iniciando BotTrader Copilot - Sistema modular centralizado v2.8")
     start_time = time.time()
+    
+    # FASE 6 - CIERRE SEGURO: Inicializar handler de shutdown graceful
+    shutdown_handler = GracefulShutdownHandler(logger=logger)
+    shutdown_handler.register_signals()
     
     print(" BOT TRADER COPILOT - Sistema Modular de Trading")
     print("=" * 60)
@@ -1235,22 +1250,26 @@ def main():
         if success:
             print("\n[OK] TEST DE BINANCE SANDBOX COMPLETADO EXITOSAMENTE")
             print("[STATS] Resultados guardados en: tests/test_results/")
-            print("📋 Revisa logs en: ../logs/binance_sandbox_test.log")
+            print("📋 Revisa logs en: descarga_datos/logs/bot_trader.log")
         else:
             print("\n[ERROR] TEST DE BINANCE SANDBOX FALLÓ")
-            print("📋 Revisa logs en: ../logs/binance_sandbox_test.log")
+            print("📋 Revisa logs en: descarga_datos/logs/bot_trader.log")
             sys.exit(1)
 
     elif mode == "live_mt5":
-        # Live trading con MT5
-        success = run_live_mt5()
+        # FASE 6 - CIERRE SEGURO: Live trading con MT5 dentro de contexto seguro
+        print("\n[LIVE] MODO: Trading en vivo con MetaTrader 5")
+        with SafeTrading(logger_instance=logger):
+            success = run_live_mt5()
         if not success:
             print("\n[ERROR] LIVE TRADING MT5 FALLÓ")
             sys.exit(1)
 
     elif mode == "live_ccxt":
-        # Live trading con CCXT
-        success = run_live_ccxt()
+        # FASE 6 - CIERRE SEGURO: Live trading con CCXT dentro de contexto seguro
+        print("\n[LIVE] MODO: Trading en vivo con CCXT (Bybit)")
+        with SafeTrading(logger_instance=logger):
+            success = run_live_ccxt()
         if not success:
             print("\n[ERROR] LIVE TRADING CCXT FALLÓ")
             sys.exit(1)

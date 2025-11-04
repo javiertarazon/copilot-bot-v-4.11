@@ -40,6 +40,9 @@ class BacktestingConfig:
     slippage: float = 0.05
     strategies: Dict[str, bool] = field(default_factory=dict)
     strategy_paths: Dict[str, List[str]] = field(default_factory=dict)
+    base_parameters: Dict[str, Any] = field(
+        default_factory=dict
+    )  # Parámetros BASE (pre-optimización) usados por defecto
     optimized_parameters: Dict[str, Any] = field(
         default_factory=dict
     )  # Parámetros optimizados por símbolo/timeframe
@@ -169,7 +172,7 @@ class SystemConfig:
     name: str = "Bot Trader Copilot"
     version: str = "1.0"
     log_level: str = "INFO"
-    log_file: str = "../logs/bot_trader.log"
+    log_file: str = "descarga_datos/logs/bot_trader.log"
     auto_launch_dashboard: bool = True
 
 
@@ -632,6 +635,50 @@ def print_config_summary(config: Config) -> None:
     print(f"  • Take Profit: {config.risk.tp_atr_multiplier}x ATR")
     print(f"  • Stop Loss: {config.risk.sl_atr_multiplier}x ATR")
     print("=" * 50)
+
+
+def get_strategy_parameters(config: Config, symbol: str = None) -> Dict[str, Any]:
+    """
+    Obtiene parámetros de estrategia con prioridad:
+    1. Parámetros optimizados para el símbolo específico (si existen)
+    2. Parámetros base (por defecto)
+    
+    Args:
+        config: Configuración centralizada
+        symbol: Símbolo para el cual obtener parámetros (ej: "BTC/USDT", "Volatility 75 Index")
+        
+    Returns:
+        Dict con parámetros de estrategia
+        
+    Example:
+        params = get_strategy_parameters(config, "BTC/USDT")
+        # Si existe optimized_parameters["BTC/USDT"], los usa
+        # Si no, usa base_parameters
+    """
+    # Obtener parámetros base
+    base_params = getattr(config.backtesting, 'base_parameters', {})
+    if isinstance(base_params, dict):
+        params = base_params.copy()
+    else:
+        params = {}
+    
+    # Si tenemos símbolo, buscar parámetros optimizados para ese símbolo
+    if symbol:
+        optimized = getattr(config.backtesting, 'optimized_parameters', {})
+        if isinstance(optimized, dict) and symbol in optimized:
+            symbol_optimized = optimized[symbol]
+            if isinstance(symbol_optimized, dict):
+                # Fusionar parámetros optimizados (sobrescriben los base)
+                params.update(symbol_optimized)
+                print(f"[CONFIG] Usando parámetros OPTIMIZADOS para {symbol}")
+            else:
+                print(f"[CONFIG] Usando parámetros BASE para {symbol} (optimizados no disponibles)")
+        else:
+            print(f"[CONFIG] Usando parámetros BASE para {symbol}")
+    else:
+        print(f"[CONFIG] Usando parámetros BASE (sin símbolo específico)")
+    
+    return params
 
 
 if __name__ == "__main__":

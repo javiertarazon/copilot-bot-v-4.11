@@ -81,7 +81,7 @@ class SafeFormatter(logging.Formatter):
 
         return super().format(record)
 
-def setup_logging(log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> None:
+def setup_logging(log_level: str = "INFO", log_file: str = None) -> None:
     """
     Configura el sistema de logging con parámetros simples.
     FUNCIÓN PRINCIPAL para inicializar el sistema de logging global.
@@ -126,7 +126,7 @@ def setup_logging(log_level: str = "INFO", log_file: str = "../logs/bot_trader.l
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
-def setup_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> logging.Logger:
+def setup_logger(name: str, log_level: str = "INFO", log_file: str = None) -> logging.Logger:
     """
     Configura un logger específico con un nombre para un componente.
 
@@ -157,19 +157,21 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bo
     # Verificar si ya tiene handlers para evitar duplicados
     if not logger.handlers:
         # Crear directorio de logs si no existe
-        log_dir = os.path.dirname(log_file)
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        if log_file:
+            log_dir = os.path.dirname(log_file)
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir)
             
-        # Crear formatter seguro
+            # Crear formatter seguro
+            formatter = SafeFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+            # Configurar handler de archivo
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
+        # Configurar handler de consola (siempre)
         formatter = SafeFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-        # Configurar handler de archivo
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-        # Configurar handler de consola
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
@@ -179,7 +181,7 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bo
 
     return logger
 
-def get_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> logging.Logger:
+def get_logger(name: str, log_level: str = "INFO", log_file: str = None) -> logging.Logger:
     """
     Obtiene un logger con el nombre especificado.
     Esta función es un alias para setup_logger y debe usarse en todo el sistema.
@@ -202,13 +204,13 @@ def initialize_system_logging(config: Optional[Dict[str, Any]] = None) -> None:
 
     Args:
         config: Configuración de logging. Si es None, se usará la configuración por defecto.
-               Formato esperado: {'level': 'INFO', 'file': '../logs/bot_trader.log'}
+               Formato esperado: {'level': 'INFO', 'file': 'descarga_datos/logs/bot_trader.log'}
     """
     if config is None:
-        config = {'level': 'INFO', 'file': '../logs/bot_trader.log'}
+        config = {'level': 'INFO', 'file': 'descarga_datos/logs/bot_trader.log'}
     
     log_level = config.get('level', 'INFO').upper()
-    log_file = config.get('file', '../logs/bot_trader.log')
+    log_file = config.get('file', 'descarga_datos/logs/bot_trader.log')
     
     # Verificar si el directorio de logs existe, si no, crearlo
     log_dir = os.path.dirname(log_file)

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from utils.logger import get_logger
 from risk_management.risk_management import AdvancedRiskManager
+from utils.pnl_calculator import PnLCalculator
 
 logger = get_logger(__name__)
 
@@ -54,6 +55,9 @@ class AdvancedBacktester(Backtester):
         # Parámetros de comisión y slippage (inicializados con valores por defecto)
         self.commission = 0.0005  # 0.05% por defecto para crypto
         self.slippage = 0.0002   # 0.02% por defecto
+        
+        # FASE 8 - P&L CON COMISIONES: Inicializar calculador de P&L con comisiones
+        self.pnl_calculator = PnLCalculator(logger=self.logger)
 
     def configure(self, config: dict):
         """
@@ -263,6 +267,9 @@ class AdvancedBacktester(Backtester):
         losing_trades = total_trades - winning_trades
         win_rate = (winning_trades / total_trades) if total_trades > 0 else 0
         
+        # FASE 8 - P&L CON COMISIONES: Calcular P&L neto incluyendo comisiones
+        # Los trades ya incluyen comisiones en su P&L, así que usar la suma directa
+        # NO aplicar comisiones adicionales con PnLCalculator para evitar doble cálculo
         total_pnl = sum(t.get('pnl', 0) for t in trades)
         
         # --- Métricas de Equity y Riesgo ---
@@ -284,7 +291,9 @@ class AdvancedBacktester(Backtester):
             annual_return_pct = 0.0
 
         # Calmar Ratio corregido: usa retorno anualizado, no retorno total
-        calmar_ratio = annual_return_pct / max_drawdown if max_drawdown != 0 else 0
+        # Convertir max_drawdown a porcentaje para la fórmula
+        max_drawdown_pct = max_drawdown * 100
+        calmar_ratio = annual_return_pct / max_drawdown_pct if max_drawdown_pct != 0 else 0
 
         # --- Métricas de P&L ---
         gross_profit = sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0)
@@ -317,8 +326,9 @@ class AdvancedBacktester(Backtester):
         except Exception:
             volatility = 0.0
         # --- Recovery Factor, Average Trade Net Profit %, Risk of Ruin ---
-        # Recovery Factor: Net Profit ÷ Max Drawdown
-        recovery_factor = total_pnl / max_drawdown if max_drawdown > 0 else float('inf')
+        # Recovery Factor: Net Profit ÷ Max Drawdown (convertir DD a porcentaje para la fórmula)
+        max_drawdown_pct_for_rf = max_drawdown * 100
+        recovery_factor = total_pnl / max_drawdown_pct_for_rf if max_drawdown_pct_for_rf > 0 else float('inf')
         # Avg Trade Net Profit %
         avg_trade_pct = (sum(t.get('pnl_percent',0) for t in trades) / total_trades) if total_trades > 0 else 0
         # Risk of Ruin (probabilidad de perder 50% del capital)
@@ -378,7 +388,10 @@ class AdvancedBacktester(Backtester):
         return result
 
     def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
-        """Calcula el drawdown máximo como porcentaje"""
+        """
+        Calcula el drawdown máximo como DECIMAL (0-1)
+        IMPORTANTE: Dashboard multiplica por 100, así que retornamos decimal sin multiplicar
+        """
         if equity_curve.empty:
             return 0.0
 
@@ -386,15 +399,16 @@ class AdvancedBacktester(Backtester):
         # Evitar división por cero
         peak = peak.replace(0, np.nan).ffill().fillna(1e-8)
 
-        # Calcular drawdown como porcentaje del pico
-        drawdown_pct = (equity_curve - peak) / peak * 100
+        # Calcular drawdown como porcentaje del pico (SIN multiplicar por 100)
+        # El resultado será 0-1, dashboard lo multiplica por 100
+        drawdown_pct = (equity_curve - peak) / peak
 
         # El drawdown máximo es el valor más negativo (pérdida máxima)
         max_drawdown_pct = drawdown_pct.min()
 
-        # Limitar a 100% máximo (pérdida total) para valores realistas
-        # Pero permitir >100% para mostrar severidad en backtesting
-        return abs(max_drawdown_pct)
+        # Retornar el valor absoluto del drawdown como decimal (0-1)
+        # El dashboard se encargará de multiplicar por 100 para mostrar como porcentaje
+        return abs(max_drawdown_pct) if max_drawdown_pct < 0 else 0.0
 
     def _calculate_sharpe_ratio(self, equity_curve: pd.Series, risk_free_rate: float = 0.02) -> float:
         """Calcula el ratio de Sharpe CORREGIDO usando media geométrica"""
