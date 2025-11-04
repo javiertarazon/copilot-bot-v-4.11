@@ -250,8 +250,15 @@ class TestONNXModel:
     def test_sklearn_to_onnx_converter(self):
         """Test sklearn to ONNX converter."""
         try:
+            # Force reload to pick up newly installed skl2onnx
+            import sys
+            if 'onnx_model_predictor' in sys.modules:
+                del sys.modules['onnx_model_predictor']
+            
             from onnx_model_predictor import SklearnToONNXConverter
             from sklearn.ensemble import RandomForestClassifier
+            from pathlib import Path
+            import tempfile
             
             # Train dummy model
             X = np.random.rand(100, 25)
@@ -260,15 +267,13 @@ class TestONNXModel:
             rf = RandomForestClassifier(n_estimators=10, max_depth=5, random_state=42)
             rf.fit(X, y)
             
-            # Convert to ONNX
-            output_path = '/tmp/test_model.onnx'
-            success = SklearnToONNXConverter.convert_random_forest(rf, 25, output_path)
-            
-            assert success
-            assert os.path.exists(output_path)
-            
-            # Cleanup
-            os.remove(output_path)
+            # Convert to ONNX using temp directory (cross-platform)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = str(Path(tmpdir) / "test_model.onnx")
+                success = SklearnToONNXConverter.convert_random_forest(rf, 25, output_path)
+                
+                assert success
+                assert os.path.exists(output_path)
         
         except ImportError:
             pytest.skip("sklearn or skl2onnx not available")

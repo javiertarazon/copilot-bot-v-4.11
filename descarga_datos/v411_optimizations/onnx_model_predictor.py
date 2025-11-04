@@ -19,12 +19,17 @@ except ImportError:
     ONNXRUNTIME_AVAILABLE = False
     print("⚠️  ONNX Runtime not installed. Install with: pip install onnx onnxruntime")
 
-try:
-    from skl2onnx import convert_sklearn
-    from onnxmltools.utils import float_model
-    SKL2ONNX_AVAILABLE = True
-except ImportError:
-    SKL2ONNX_AVAILABLE = False
+def _check_skl2onnx_available():
+    """Check if skl2onnx is available (checks each time to handle post-install)."""
+    try:
+        import skl2onnx
+        import onnxmltools
+        return True
+    except ImportError:
+        return False
+
+SKL2ONNX_AVAILABLE = _check_skl2onnx_available()
+if not SKL2ONNX_AVAILABLE:
     print("⚠️  skl2onnx not installed. Install with: pip install skl2onnx onnxmltools")
 
 logger = logging.getLogger(__name__)
@@ -187,13 +192,9 @@ class SklearnToONNXConverter:
         Returns:
             True if successful
         """
-        if not SKL2ONNX_AVAILABLE:
-            logger.error("skl2onnx not installed")
-            return False
-        
         try:
+            # Dynamic imports to handle post-install scenarios
             from skl2onnx import convert_sklearn
-            from onnxmltools.utils import float_model
             from skl2onnx.common.data_types import FloatTensorType
             
             # Define input type
@@ -202,9 +203,14 @@ class SklearnToONNXConverter:
             # Convert
             onx = convert_sklearn(rf_model, initial_types=initial_type)
             
-            # Optimize
+            # Optimize (optional)
             if optimize:
-                onx = float_model(onx)
+                try:
+                    from onnxconverter_common.float16 import convert_float_to_float16
+                    onx = convert_float_to_float16(onx)
+                except (ImportError, AttributeError, Exception):
+                    # Skip optimization if not available or fails
+                    pass
             
             # Save
             with open(output_path, "wb") as f:
@@ -225,11 +231,8 @@ class SklearnToONNXConverter:
         optimize: bool = True
     ) -> bool:
         """Convert GradientBoosting to ONNX."""
-        if not SKL2ONNX_AVAILABLE:
-            logger.error("skl2onnx not installed")
-            return False
-        
         try:
+            # Dynamic imports to handle post-install scenarios
             from skl2onnx import convert_sklearn
             from skl2onnx.common.data_types import FloatTensorType
             
@@ -237,8 +240,12 @@ class SklearnToONNXConverter:
             onx = convert_sklearn(gb_model, initial_types=initial_type)
             
             if optimize:
-                from onnxmltools.utils import float_model
-                onx = float_model(onx)
+                try:
+                    from onnxconverter_common.float16 import convert_float_to_float16
+                    onx = convert_float_to_float16(onx)
+                except (ImportError, AttributeError, Exception):
+                    # Skip optimization if not available or fails
+                    pass
             
             with open(output_path, "wb") as f:
                 f.write(onx.SerializeToString())
