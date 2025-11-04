@@ -47,12 +47,23 @@ st.markdown("---")
 results_dir = Path(__file__).parent.parent / "data" / "dashboard_results"
 
 def load_results():
-    """Cargar resultados del JSON"""
+    """Cargar resultados del JSON - busca dinámicamente el último archivo"""
     try:
-        results_file = results_dir / "Volatility 75 Index_results.json"
-        if results_file.exists():
-            with open(results_file, 'r') as f:
-                return json.load(f)
+        # Buscar todos los archivos JSON en results_dir
+        json_files = list(results_dir.glob("*_results.json"))
+        
+        if not json_files:
+            return None
+        
+        # Usar el más reciente
+        latest_file = max(json_files, key=lambda p: p.stat().st_mtime)
+        
+        with open(latest_file, 'r') as f:
+            data = json.load(f)
+            # Guardar el símbolo para usarlo luego
+            st.session_state['current_symbol'] = latest_file.stem.replace('_results', '')
+            return data
+            
     except Exception as e:
         st.error(f"Error cargando resultados: {e}")
     return None
