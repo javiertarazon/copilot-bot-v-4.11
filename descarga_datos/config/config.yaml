@@ -40,7 +40,7 @@ backtesting:
   
   # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
-    AAPL:
+    Volatility_75_Index:
       atr_period: 17
       cci_threshold: 90
       ema_trend_period: 50
@@ -60,8 +60,8 @@ backtesting:
       stoch_oversold: 35
       stop_loss_atr_multiplier: 2.25
       take_profit_atr_multiplier: 3.75
-  # Apple en Forex tiene volumen normal
-  volume_ratio_min: 0.1
+  # Para Volatility 75 Index el volumen suele ser 0 (activo sintético). Evitar filtrado por volumen.
+  volume_ratio_min: 0.0
   # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
   volume_threshold: 0
   
@@ -80,11 +80,11 @@ backtesting:
     - UltraDetailedHeikinAshiMLStrategy
   
   symbol_selection:
-    AAPL: true                       # ✅ AAPL (Apple - Símbolo Forex MT5)
+    Volatility_75_Index: true        # ✅ Volatility 75 Index
   
   symbols:
-    - AAPL                           # ✅ Símbolo: AAPL (Apple MT5 Forex)
-  timeframe: 4h                      # Cambiar a 4h para Forex
+    - Volatility 75 Index            # ✅ Símbolo: Volatility 75 Index
+  timeframe: 15m
   
   # ========== TIPO DE TRADING ==========
   # MT5 Deriv usa margin trading con apalancamiento
