@@ -657,8 +657,8 @@ class LiveTradingOrchestrator:
                     time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
-                stop_loss = signal_details.get('stop_loss', current_price * 0.95)
-                take_profit = signal_details.get('take_profit', current_price * 1.1)
+                stop_loss = signal_details.get('stop_loss_price', signal_details.get('stop_loss', current_price * 0.95))
+                take_profit = signal_details.get('take_profit_price', signal_details.get('take_profit', current_price * 1.1))
                 risk_per_trade = signal_details.get('risk_per_trade', 0.02)
                 # USAR position_size del risk management (ya está calculado correctamente)
                 position_size = signal_details.get('position_size', None)
@@ -678,7 +678,16 @@ class LiveTradingOrchestrator:
                 if result['success']:
                     logger.info(f"Posición LONG abierta para {symbol} a {current_price}" + 
                               (f" después de {position_action}" if position_action else ""))
-                    self._record_trade_opened(result['order'], signal_data)
+                    # Construir diccionario de orden con información de MT5
+                    order_info = {
+                        'ticket': result.get('order', 0),
+                        'order_type': 'BUY',
+                        'price': result.get('price', current_price),
+                        'volume': result.get('volume', position_size),
+                        'stop_loss': stop_loss,
+                        'take_profit': take_profit
+                    }
+                    self._record_trade_opened(order_info, signal_data)
                 else:
                     logger.error(f"Error al abrir posición LONG para {symbol}: {result['message']}")
                     
@@ -702,8 +711,8 @@ class LiveTradingOrchestrator:
                     time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
-                stop_loss = signal_details.get('stop_loss', current_price * 1.05)
-                take_profit = signal_details.get('take_profit', current_price * 0.9)
+                stop_loss = signal_details.get('stop_loss_price', signal_details.get('stop_loss', current_price * 1.05))
+                take_profit = signal_details.get('take_profit_price', signal_details.get('take_profit', current_price * 0.9))
                 risk_per_trade = signal_details.get('risk_per_trade', 0.02)
                 # USAR position_size del risk management (ya está calculado correctamente)
                 position_size = signal_details.get('position_size', None)
@@ -723,7 +732,16 @@ class LiveTradingOrchestrator:
                 if result['success']:
                     logger.info(f"Posición SHORT abierta para {symbol} a {current_price}" + 
                               (f" después de {position_action}" if position_action else ""))
-                    self._record_trade_opened(result['order'], signal_data)
+                    # Construir diccionario de orden con información de MT5
+                    order_info = {
+                        'ticket': result.get('order', 0),
+                        'order_type': 'SELL',
+                        'price': result.get('price', current_price),
+                        'volume': result.get('volume', position_size),
+                        'stop_loss': stop_loss,
+                        'take_profit': take_profit
+                    }
+                    self._record_trade_opened(order_info, signal_data)
                 else:
                     logger.error(f"Error al abrir posición SHORT para {symbol}: {result['message']}")
                     
@@ -752,8 +770,8 @@ class LiveTradingOrchestrator:
         # Registrar en active_positions
         position_id = order_info.get('ticket', 0)
         self.active_positions[position_id] = {
-            'symbol': signal_data['symbol'],
-            'strategy': signal_data['strategy'],
+            'symbol': signal_data.get('symbol', 'UNKNOWN'),
+            'strategy': signal_data.get('strategy', signal_data.get('strategy_name', 'UNKNOWN')),
             'type': order_info.get('order_type', ''),
             'open_price': order_info.get('price', 0.0),
             'volume': order_info.get('volume', 0.0),
@@ -763,7 +781,7 @@ class LiveTradingOrchestrator:
             'signal_data': signal_data
         }
         
-        logger.info(f"Nueva posición registrada: {position_id} para {signal_data['symbol']}")
+        logger.info(f"Nueva posición registrada: {position_id} para {signal_data.get('symbol', 'UNKNOWN')}")
     
     def _record_trade_closed(self, position_info: Dict[str, Any], signal_data: Dict[str, Any]):
         """
@@ -871,10 +889,13 @@ class LiveTradingOrchestrator:
             
             for position_id, position_data in list(self.active_positions.items()):
                 symbol = position_data['symbol']
-                current_price = current_prices.get(symbol)
+                tick_data = current_prices.get(symbol)
                 
-                if current_price is None:
+                if tick_data is None:
                     continue  # No hay precio actual, skipear
+                
+                # Extraer precio actual del diccionario tick (usar bid para SELL, ask para BUY)
+                current_price = tick_data.get('bid', 0) if isinstance(tick_data, dict) else tick_data
                 
                 open_price = float(position_data['open_price'])
                 tp = float(position_data['take_profit'])

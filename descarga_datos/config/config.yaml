@@ -34,7 +34,9 @@ backtesting:
     stoch_oversold: 35
     stop_loss_atr_multiplier: 2.25
     take_profit_atr_multiplier: 3.75
-    volume_ratio_min: 0.3
+  # Permitir instrumentos sintéticos (ej. Volatility Indices) con volume=0
+  # Ajuste temporal: 0.0 para evitar que filtros de volumen bloqueen señales en live
+  volume_ratio_min: 0.0
   
   # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
@@ -58,7 +60,10 @@ backtesting:
       stoch_oversold: 35
       stop_loss_atr_multiplier: 2.25
       take_profit_atr_multiplier: 3.75
-      volume_ratio_min: 0.3
+  # Para Volatility 75 Index el volumen suele ser 0 (activo sintético). Evitar filtrado por volumen.
+  volume_ratio_min: 0.0
+  # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
+  volume_threshold: 0
   
   slippage: 0.05                     # Slippage de config_original
   
