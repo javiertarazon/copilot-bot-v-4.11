@@ -1,0 +1,108 @@
+ANÁLISIS DE SEÑALES - FORMATO DATOS
+
+=== TABLA 1: DISTRIBUCIÓN DE CONFIANZA ===
+
+Rango_Confianza_Desde,Rango_Confianza_Hasta,Cantidad_Señales,Porcentaje_Total,Tipo_Señal,Descripción
+0.6200,0.6249,32,0.7%,SELL,Baja confianza
+0.6250,0.6299,142,3.1%,SELL,Baja-media confianza
+0.6300,0.6349,2150,47.7%,SELL,Confianza media predominante
+0.6350,0.6399,2193,48.6%,SELL,Alta confianza predominante
+0.6400,0.6500,2,0.04%,SELL,Muy alta confianza
+TOTAL,PROMEDIO=0.6315,4517,100%,SELL,Desv=±0.0050
+
+=== TABLA 2: CICLOS ESPECÍFICOS ANALIZADOS ===
+
+Ciclo,Hora_UTC,Tipo_Señal,Confianza_ML,Precio_Entrada,SL_Precio,TP_Precio,ATR_Valor,Distancia_SL,Distancia_TP,Estado_v4.8,Estado_v4.9
+4492,06:42:42,SELL,0.6364,42288.58,42662.29,41354.29,249.14,373.71,934.29,BLOQUEADA,BLOQUEADA
+4493,06:42:47,SELL,0.6364,42284.37,42658.08,41350.08,249.14,373.71,934.29,BLOQUEADA,BLOQUEADA
+4494,06:42:52,SELL,0.6364,42293.53,42667.24,41359.24,249.14,373.71,934.29,BLOQUEADA,BLOQUEADA
+4495,06:42:58,SELL,0.6364,42290.60,42664.31,41356.31,249.14,373.71,934.29,BLOQUEADA,BLOQUEADA
+4500,06:42:52,SELL,0.6364,42293.53,42667.24,41359.24,249.14,373.71,934.29,BLOQUEADA,BLOQUEADA
+4505,06:43:30,SELL,0.6364,42275.73,42651.28,41336.84,250.37,375.55,938.89,BLOQUEADA,BLOQUEADA
+4510,06:43:56,SELL,0.6236,42222.13,42607.79,41257.98,257.11,385.66,964.15,BLOQUEADA,BLOQUEADA
+4516,06:44:51,SELL,0.6263,42204.30,42598.34,41219.20,262.69,394.04,985.10,BLOQUEADA,BLOQUEADA
+4517,06:44:56,SELL,0.6263,42202.58,42596.62,41217.48,262.69,394.04,985.10,BLOQUEADA,BLOQUEADA
+
+=== TABLA 3: v4.9 CICLOS EJECUTADOS ===
+
+Ciclo,Hora_UTC,Tipo_Señal,Confianza_ML,Precio_Entrada,SL_Precio,TP_Precio,ATR_Valor,Tamaño_Lotes,Riesgo_USD,Status_Ejecución,Diferencia_vs_Anterior
+1,06:51:24,SELL,0.6314,42247.75,42620.82,41315.08,248.71,0.001,50.00,ABIERTA,-
+2,06:51:30,SELL,0.6314,42264.44,42637.51,41331.77,248.71,0.001,50.00,ABIERTA,+16.69pts vs Ciclo1
+
+=== TABLA 4: COMPARATIVA BUY vs SELL ===
+
+Tipo_Orden,Cantidad,Porcentaje,Confianza_Promedio,Rango_Confianza,Descripción
+BUY,0,0%,N/A,N/A,No se generaron órdenes de compra
+SELL,4517,100%,0.6315,0.6200-0.6400,Todas las órdenes son SHORT
+NEUTRAL,0,0%,N/A,N/A,Sin posiciones neutrales
+TOTAL,4517,100%,0.6315,0.6200-0.6400,Modelo calibrado SOLO para SHORT
+
+=== TABLA 5: ESTADÍSTICAS DE CONFIANZA ML ===
+
+Estadística,Valor,Unidad,Interpretación
+Confianza_Mínima,0.6200,%,Por debajo de umbral ideal
+Confianza_Máxima,0.6400,%,Raro alcanzar (solo 2 casos)
+Confianza_Promedio,0.6315,%,CONSISTENTE y ESTABLE
+Confianza_Mediana,0.6315,%,Coincide con promedio
+Desviación_Estándar,0.0050,%,Muy baja variación (BUENA)
+Rango_Intercuartil,0.6263-0.6364,%,95% de señales aquí
+
+=== TABLA 6: ANÁLISIS DE CIERRE DE POSICIÓN ===
+
+Mecanismo_Cierre,¿Se_Activó?,Razón,Evidencia_en_Logs,Estado
+Take_Profit_TP,NO,Precio no alcanzó 41315.08,Precio máximo 42500.70,NUNCA SE EJECUTÓ
+Stop_Loss_SL,NO,Precio no alcanzó 42620.82,Precio min 42142.34; SL distante,NUNCA SE EJECUTÓ
+Trailing_Stop,NO,Función nunca fue verificada,Config presente pero no llamada,FALSO NEGATIVO
+Cierre_Manual,NO,Sistema en loop automático,Solo detener proceso y mandar comando,POSIBLE
+Cierre_por_MT5,INCIERTO,Dependencia del broker,Sin confirmación en logs de Python,RIESGO
+
+=== TABLA 7: PROBLEMAS CRÍTICOS ===
+
+Problema,Severidad,Síntoma,Causa_Raíz,Solución_Requerida
+Sin_Loop_Monitoreo,CRÍTICA,Posición abierta indefinidamente,No hay while check_tp/check_sl,Implementar monitor_open_positions()
+Trailing_Stop_Dormido,CRÍTICA,Config presente pero nunca verificada,Función no llamada en ciclos,Agregar check_trailing_stop() en loop
+Sin_Redundancia_Python,CRÍTICA,Dependencia 100% en MT5,Sin backup si broker falla,Implementar cierre fallback en Python
+100%_Señales_SHORT,MEDIA,No hay órdenes de compra,Modelo entrenado solo SHORT,Re-entrenar con ambas direcciones
+Falta_Logging_TP_SL,MEDIA,No confirma cierre automático,Sin eventos en logs,Agregar eventos de verificación
+
+=== TABLA 8: COMPARATIVA v4.8 vs v4.9 ===
+
+Característica,v4.8,v4.9,v4.10_Requerido
+Max_Posiciones_Simultaneas,1,5,5+
+Posiciones_Ejecutadas,1,2+,5+
+Señales_SELL_Generadas,4517,4517,Igual
+Confianza_Promedio_ML,0.6315,0.6315,0.6315+
+Monitoreo_TP_SL,NO,NO,SÍ
+Trailing_Stop_Verificado,NO,NO,SÍ
+Fallback_Cierre,NO,NO,SÍ
+Win_Rate_Esperado,N/A,Pendiente,63%+
+
+=== TABLA 9: RESUMEN DE CONFIANZA POR HORA ===
+
+Hora_UTC,Cantidad_Señales,Confianza_Promedio,Min_Confianza,Max_Confianza,Tipo_Señal
+06:42:00-06:42:59,10,0.6364,0.6364,0.6364,SELL
+06:43:00-06:43:59,8,0.6315,0.6275,0.6364,SELL
+06:44:00-06:44:59,7,0.6260,0.6236,0.6263,SELL
+06:51:00-06:51:59,2,0.6314,0.6314,0.6314,SELL
+
+=== TABLA 10: POSICIÓN ABIERTA - DETALLES ===
+
+Parámetro,Ciclo_1_v4.9,Ciclo_2_v4.9,Estado_Actual
+Tiempo_Apertura,06:51:24,06:51:30,Abierta
+Precio_Entrada,42247.75,42264.44,Diferentes
+Distancia_a_SL,+373pts,+373pts,SL cercano
+Distancia_a_TP,-933pts,-933pts,TP lejano
+Último_Precio_Conocido,42300.18,42300.18,Potencial ganancia SHORT
+Confianza,63.14%,63.14%,Alta
+Risk_Reward_Ratio,1:2.5,1:2.5,Excelente
+Tamaño_Riesgo,50USD,50USD,1% capital
+Peligro_Inmediato,SL cercano,SL cercano,⚠️ ATENCIÓN
+
+===== FIN DEL ANÁLISIS =====
+
+Generado: 4 de noviembre de 2025
+Período analizado: Ciclos #4492 - #4517 (v4.8) + Ciclos #1-#2 (v4.9)
+Símbolo: Volatility 75 Index
+Timeframe: 15 minutos
+Estrategia: UltraDetailedHeikinAshiML
+Estado del sistema: Operativo con limitaciones conocidas
