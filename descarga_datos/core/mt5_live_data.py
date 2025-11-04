@@ -41,6 +41,7 @@ class MT5LiveDataProvider:
         self.connected = False
         self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
+        self.last_candle_timestamp = {}  # Última marca de tiempo procesada por símbolo/timeframe
         self.market_status = {}  # Estado del mercado por símbolo
         
         # Configuración de símbolos y timeframes por defecto
@@ -126,15 +127,18 @@ class MT5LiveDataProvider:
         """
         return self.get_live_data_efficient(symbol, timeframe, bars)
             
-    def get_live_data_efficient(self, symbol: str, timeframe: str, bars: int = 100) -> pd.DataFrame:
+    def get_live_data_efficient(self, symbol: str, timeframe: str, bars: int = 100) -> Optional[pd.DataFrame]:
         """
         Método optimizado para obtener datos en vivo desde MT5.
-        Aprovecha las capacidades completas de MT5 sin limitaciones de exchange.
+        Aprovecha caché inteligente para detectar candles duplicados.
+        
+        🔧 FIX v4.10: Retorna None si el candle no ha cambiado (ciclos repetitivos).
+        Esto previene el procesamiento de 180+ señales idénticas por candle de 15m.
         
         Estrategia:
-        - Primera vez: Obtiene datos históricos suficientes
-        - Actualizaciones: Solo obtiene barras nuevas desde la última actualización
-        - Cache inteligente: Mantiene datos históricos y actualiza incrementalmente
+        - Primera vez: Obtiene datos históricos y guarda timestamp del último candle
+        - Actualizaciones: Solo retorna datos si el timestamp del último candle cambió
+        - Si es el mismo candle: Retorna None (sin procesar)
         
         Args:
             symbol: Símbolo a consultar
@@ -142,9 +146,10 @@ class MT5LiveDataProvider:
             bars: Número de barras para la carga inicial
             
         Returns:
-            DataFrame con datos OHLCV actualizados
+            DataFrame con datos OHLCV actualizados si hay nuevo candle, None si no cambió
         """
         cache_key = f"{symbol}_{timeframe}"
+        candle_key = f"{symbol}_{timeframe}_last_candle_ts"
         
         # Convertir timeframe a constante MT5
         tf_map = {
@@ -163,8 +168,7 @@ class MT5LiveDataProvider:
             self.logger.error(f"Timeframe no válido: {timeframe}")
             return None
             
-        # Decide whether to aggregate ticks into timeframe bars. This is more robust
-        # for brokers that provide frequent ticks but inconsistent rate bars.
+        # Decide whether to aggregate ticks into timeframe bars
         use_ticks = True
         try:
             if isinstance(self.config, dict):
@@ -175,28 +179,45 @@ class MT5LiveDataProvider:
             use_ticks = True
 
         try:
-            # If configured, aggregate ticks into timeframe bars to guarantee
-            # the same OHLCV semantics as the backtester (e.g., 15m candles).
+            # Obtener datos (agregados por ticks o históricos)
             if use_ticks:
                 agg = self.get_aggregated_bars(symbol, timeframe, bars)
                 if agg is not None:
-                    return agg
+                    data = agg
+                else:
+                    data = self._load_initial_data(symbol, mt5_tf, cache_key, bars)
+            else:
+                if cache_key not in self.data_cache:
+                    data = self._load_initial_data(symbol, mt5_tf, cache_key, bars)
+                else:
+                    data = self._update_cached_data(symbol, mt5_tf, cache_key)
             
-            # Verificar si el cache está stale (más de 5 segundos de antigüedad)
-            if not self._is_cache_stale(cache_key, max_age_seconds=5):
-                # Cache fresco - retornar datos cacheados
-                cached_data = self.data_cache[cache_key].get('data')
-                if cached_data is not None and len(cached_data) > 0:
-                    self.logger.debug(f"Retornando datos cacheados frescos para {symbol} {timeframe}")
-                    return cached_data.copy()
+            if data is None or len(data) == 0:
+                return None
             
-            # Si no hay datos en cache o está stale, cargar datos iniciales
-            if cache_key not in self.data_cache or self._is_cache_stale(cache_key, max_age_seconds=5):
-                self.logger.info(f"Cargando datos para {symbol} {timeframe} ({bars} barras)")
-                return self._load_initial_data(symbol, mt5_tf, cache_key, bars)
+            # 🔧 NUEVA LÓGICA: Detectar candle duplicado
+            # Extraer timestamp del último candle (más reciente)
+            last_candle_ts = data['time'].max()
             
-            # Si hay datos en cache y no está stale, actualizar incrementalmente
-            return self._update_cached_data(symbol, mt5_tf, cache_key)
+            # Obtener timestamp del último candle procesado
+            stored_ts = self.last_candle_timestamp.get(candle_key)
+            
+            if stored_ts is not None and stored_ts == last_candle_ts:
+                # ⚠️ EL CANDLE NO HA CAMBIADO - Retornar None
+                # Esto indica al orquestador que no hay datos nuevos
+                self.logger.debug(
+                    f"[CACHE HIT] {symbol} {timeframe}: candle no cambió "
+                    f"(timestamp: {last_candle_ts}). Retornando None para skipear procesamiento."
+                )
+                return None
+            
+            # ✅ NUEVO CANDLE - Guardar timestamp y retornar datos
+            self.last_candle_timestamp[candle_key] = last_candle_ts
+            self.logger.debug(
+                f"[CACHE MISS] {symbol} {timeframe}: candle nuevo detectado "
+                f"(anterior: {stored_ts}, actual: {last_candle_ts}). Procesando datos."
+            )
+            return data.copy()
             
         except Exception as e:
             self.logger.error(f"Error obteniendo datos eficientes para {symbol} {timeframe}: {str(e)}")

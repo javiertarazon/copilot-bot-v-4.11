@@ -367,8 +367,14 @@ class LiveTradingOrchestrator:
                             # El sistema mantiene cache inteligente y solo actualiza barras nuevas
                             data = self.data_provider.get_live_data_efficient(symbol, timeframe, bars=200)
                             
-                            if data is None or len(data) < 50:
-                                logger.warning(f" Datos insuficientes para {symbol} {timeframe}: {len(data) if data is not None else 0} filas")
+                            # 🔧 FIX v4.10: Si data es None, significa que el candle no cambió
+                            # (ya fue procesado en ciclo anterior). Skipear para evitar señales duplicadas
+                            if data is None:
+                                logger.debug(f"  {symbol} {timeframe}: Candle sin cambios. Skipear procesamiento (previene 180x operaciones/15m)")
+                                continue
+                            
+                            if len(data) < 50:
+                                logger.warning(f" Datos insuficientes para {symbol} {timeframe}: {len(data)} filas")
                                 continue
                             
                             logger.info(f" Datos obtenidos: {len(data)} filas para {symbol} {timeframe}")
@@ -408,6 +414,10 @@ class LiveTradingOrchestrator:
                         logger.error(f" [SYNC] Error durante sincronización: {str(sync_error)}")
                     
                     last_sync_time = current_time
+                
+                # 🔧 FIX v4.10: MONITOREAR TP/SL/TRAILING STOP
+                # Cada ciclo, verificar si alguna posición debe cerrarse automáticamente
+                self.monitor_open_positions_for_tp_sl()
                 
                 # Actualizar métricas
                 self._update_metrics()
@@ -824,6 +834,143 @@ class LiveTradingOrchestrator:
         
         except Exception as e:
             logger.error(f"Error al actualizar métricas: {str(e)}")
+    
+    def monitor_open_positions_for_tp_sl(self):
+        """
+        🔧 FIX v4.10: Monitorea posiciones abiertas y cierra si se activan TP/SL/Trailing Stop.
+        
+        Este método debe ejecutarse cada ciclo para:
+        1. Verificar TP (Take Profit) activado
+        2. Verificar SL (Stop Loss) activado
+        3. Verificar Trailing Stop (si está habilitado)
+        
+        Se ejecuta en el ciclo principal después de cada procesamiento de datos.
+        """
+        if not self.active_positions:
+            return  # No hay posiciones abiertas
+        
+        try:
+            # Obtener datos actuales de precios
+            current_prices = {}
+            for strategy_name, strategy in self.strategy_instances.items():
+                live_config = self.strategy_live_configs[strategy_name]
+                symbols = live_config.get('symbols', [])
+                
+                for symbol in symbols:
+                    if symbol not in current_prices:
+                        # Obtener precio actual desde MT5
+                        try:
+                            tick = self.order_executor.get_current_price(symbol)
+                            if tick:
+                                current_prices[symbol] = tick
+                        except Exception as e:
+                            logger.warning(f"No se pudo obtener precio para {symbol}: {e}")
+            
+            # Monitorear cada posición abierta
+            positions_to_close = []
+            
+            for position_id, position_data in list(self.active_positions.items()):
+                symbol = position_data['symbol']
+                current_price = current_prices.get(symbol)
+                
+                if current_price is None:
+                    continue  # No hay precio actual, skipear
+                
+                open_price = float(position_data['open_price'])
+                tp = float(position_data['take_profit'])
+                sl = float(position_data['stop_loss'])
+                position_type = position_data['type']
+                
+                close_reason = None
+                close_price = current_price
+                
+                # Verificar TP (Take Profit)
+                if position_type.upper() == 'BUY' and current_price >= tp and tp > 0:
+                    close_reason = 'TP_ACTIVATED'
+                elif position_type.upper() == 'SELL' and current_price <= tp and tp > 0:
+                    close_reason = 'TP_ACTIVATED'
+                
+                # Verificar SL (Stop Loss) si TP no fue activado
+                if close_reason is None:
+                    if position_type.upper() == 'BUY' and current_price <= sl and sl > 0:
+                        close_reason = 'SL_ACTIVATED'
+                    elif position_type.upper() == 'SELL' and current_price >= sl and sl > 0:
+                        close_reason = 'SL_ACTIVATED'
+                
+                # Verificar Trailing Stop si está habilitado
+                if close_reason is None:
+                    trailing_stop_enabled = self.live_config.get('enable_trailing_stop', False)
+                    if trailing_stop_enabled:
+                        trailing_stop_pct = float(self.live_config.get('trailing_stop_pct', 0.65)) / 100
+                        
+                        # Calcular trailing stop level
+                        if position_type.upper() == 'BUY':
+                            # En BUY: si precio sube y luego baja más del 0.65%, cerrar
+                            highest_price = position_data.get('highest_price', open_price)
+                            if current_price > highest_price:
+                                position_data['highest_price'] = current_price
+                            else:
+                                trailing_level = highest_price * (1 - trailing_stop_pct)
+                                if current_price <= trailing_level:
+                                    close_reason = 'TRAILING_STOP_ACTIVATED'
+                                    close_price = current_price
+                        
+                        elif position_type.upper() == 'SELL':
+                            # En SELL: si precio baja y luego sube más del 0.65%, cerrar
+                            lowest_price = position_data.get('lowest_price', open_price)
+                            if current_price < lowest_price:
+                                position_data['lowest_price'] = current_price
+                            else:
+                                trailing_level = lowest_price * (1 + trailing_stop_pct)
+                                if current_price >= trailing_level:
+                                    close_reason = 'TRAILING_STOP_ACTIVATED'
+                                    close_price = current_price
+                
+                # Si alguna condición se activó, cerrar la posición
+                if close_reason:
+                    positions_to_close.append({
+                        'position_id': position_id,
+                        'position_data': position_data,
+                        'reason': close_reason,
+                        'close_price': close_price
+                    })
+            
+            # Ejecutar cierres de posiciones
+            for close_info in positions_to_close:
+                position_id = close_info['position_id']
+                reason = close_info['reason']
+                close_price = close_info['close_price']
+                position_data = close_info['position_data']
+                
+                try:
+                    # Cerrar en MT5
+                    result = self.order_executor.close_position(
+                        position_id,
+                        position_data['symbol']
+                    )
+                    
+                    if result and result.get('status') == 'success':
+                        logger.info(
+                            f"✅ Posición {position_id} cerrada automáticamente: {reason} "
+                            f"(P&L: {result.get('profit', 0):.2f})"
+                        )
+                        
+                        # Registrar cierre
+                        close_order = {
+                            'ticket': position_id,
+                            'symbol': position_data['symbol'],
+                            'price_close': close_price,
+                            'profit': result.get('profit', 0.0)
+                        }
+                        self._record_trade_closed(close_order, position_data.get('signal_data', {}))
+                    else:
+                        logger.warning(f"❌ Error cerrando posición {position_id}: {reason}")
+                
+                except Exception as e:
+                    logger.error(f"Error cerrando posición {position_id}: {str(e)}")
+        
+        except Exception as e:
+            logger.error(f"Error en monitoreo de posiciones: {str(e)}")
     
     def get_current_metrics(self) -> Dict[str, Any]:
         """
