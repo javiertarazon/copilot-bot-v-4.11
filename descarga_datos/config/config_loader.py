@@ -27,6 +27,13 @@ class MT5Config:
     login: int = 0
     password: str = ""
     timeout: int = 60000
+    # FIX v4.11: Nuevos campos para configuración de datos históricos
+    history_bars: int = 1000
+    use_tick_aggregation: bool = False
+    symbols: List[str] = field(default_factory=list)
+    timeframes: List[str] = field(default_factory=list)
+    max_retries: int = 3
+    retry_delay: int = 5
 
 
 @dataclass
@@ -165,6 +172,26 @@ class LiveTradingConfig:
     ccxt_exchange: str = "bybit"
     ccxt_symbols: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     ccxt_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h"])
+    
+    # FIX v4.11: Nuevos campos para correcciones críticas
+    history_bars: int = 1000  # Barras históricas para contexto ML
+    use_tick_aggregation: bool = False  # Deshabilitar agregación por ticks
+    timeframes: List[str] = field(default_factory=lambda: ["4h"])  # Timeframes alineados con backtest
+    symbols: List[str] = field(default_factory=lambda: ["EURUSD"])  # Símbolos para live trading
+    trading_mode: str = "margin"  # Modo de trading
+    enable_position_limit: bool = True  # Limitar posiciones concurrentes
+    allow_multiple_positions_same_symbol: bool = True  # Múltiples posiciones por símbolo
+    position_sync_timeout: int = 5  # Timeout para sincronización
+    position_sync_interval_seconds: int = 30  # Intervalo de sincronización
+    position_sync_interval: int = 10  # Intervalo entre sincronizaciones
+    use_open_orders_only: bool = False  # Usar solo órdenes abiertas
+    order_lock_timeout: int = 30  # Timeout para bloqueo de órdenes
+    margin_type: str = "cross"  # Tipo de margen
+    margin_leverage: int = 1  # Apalancamiento
+    enable_auto_close_tp_sl: bool = True  # Cierre automático en TP/SL
+    enable_trailing_stop: bool = True  # Trailing stop dinámico
+    trailing_stop_pct: float = 0.65  # Porcentaje de trailing stop
+    max_account_drawdown: float = 0.05  # Máximo drawdown de cuenta
 
 
 @dataclass
