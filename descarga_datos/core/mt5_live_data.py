@@ -66,6 +66,7 @@ class MT5LiveDataProvider:
         # Configuración de símbolos y timeframes por defecto
         self.symbols = getattr(config, 'symbols', ['EURUSD', 'GBPUSD', 'USDJPY']) if config else ['EURUSD', 'GBPUSD', 'USDJPY']
         self.timeframes = getattr(config, 'timeframes', ['1m', '5m', '1h']) if config else ['1m', '5m', '1h']
+        # FIX: Incrementar de 200 a 1000+ barras para contexto ML equivalente a backtest
         self.history_bars = getattr(config, 'history_bars', 1000) if config else 1000
         
         # Configuración de reintentos
@@ -187,18 +188,19 @@ class MT5LiveDataProvider:
             self.logger.error(f"Timeframe no válido: {timeframe}")
             return None
             
-        # Decide whether to aggregate ticks into timeframe bars
-        use_ticks = True
+        # FIX: Deshabilitar agregación por ticks que causa 99.3% duplicación
+        # Usar directamente datos históricos de MT5 que están alineados al timeframe
+        use_ticks = False
         try:
             if isinstance(self.config, dict):
-                use_ticks = bool(self.config.get('use_tick_aggregation', True))
+                use_ticks = bool(self.config.get('use_tick_aggregation', False))
             else:
-                use_ticks = bool(getattr(self.config, 'use_tick_aggregation', True))
+                use_ticks = bool(getattr(self.config, 'use_tick_aggregation', False))
         except Exception:
-            use_ticks = True
+            use_ticks = False
 
         try:
-            # Obtener datos (agregados por ticks o históricos)
+            # Obtener datos históricos directamente (sin agregación por ticks)
             if use_ticks:
                 agg = self.get_aggregated_bars(symbol, timeframe, bars)
                 if agg is not None:
@@ -579,6 +581,89 @@ class MT5LiveDataProvider:
             self.logger.error(f"Error al obtener datos para {symbol} {timeframe}: {str(e)}")
             return None
     
+    def is_candle_closed(self, timeframe: str) -> Tuple[bool, int]:
+        """
+        Determina si la vela actual está cerrada y cuánto tiempo falta para el siguiente cierre.
+        
+        Args:
+            timeframe: Timeframe en formato string ("1m", "5m", "15m", "1h", "4h")
+            
+        Returns:
+            Tuple[bool, int]: (is_closed, seconds_to_next_close)
+                - is_closed: True si estamos justo después del cierre de vela
+                - seconds_to_next_close: Segundos hasta el próximo cierre de vela
+        """
+        # Mapeo de timeframe a minutos
+        tf_minutes = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 15,
+            "30m": 30,
+            "1h": 60,
+            "4h": 240,
+            "1d": 1440
+        }
+        
+        minutes = tf_minutes.get(timeframe.lower(), 5)
+        now = datetime.now()
+        
+        # Calcular segundos desde inicio del minuto actual
+        seconds_in_minute = now.second
+        minutes_in_hour = now.minute
+        hours_in_day = now.hour
+        
+        # Calcular posición dentro del timeframe
+        if minutes < 60:
+            # Para timeframes menores a 1h, usar solo minutos
+            elapsed_minutes = minutes_in_hour % minutes
+            elapsed_seconds = elapsed_minutes * 60 + seconds_in_minute
+            period_seconds = minutes * 60
+        elif minutes == 60:
+            # Para 1h, usar minutos dentro de la hora
+            elapsed_seconds = minutes_in_hour * 60 + seconds_in_minute
+            period_seconds = 3600
+        elif minutes == 240:
+            # Para 4h, calcular desde inicio del bloque de 4h
+            hours_in_period = hours_in_day % 4
+            elapsed_seconds = hours_in_period * 3600 + minutes_in_hour * 60 + seconds_in_minute
+            period_seconds = 4 * 3600
+        else:  # 1d
+            elapsed_seconds = hours_in_day * 3600 + minutes_in_hour * 60 + seconds_in_minute
+            period_seconds = 24 * 3600
+        
+        # Segundos hasta el próximo cierre
+        seconds_to_close = period_seconds - elapsed_seconds
+        
+        # Consideramos que la vela está "cerrada" si estamos en los primeros 10 segundos del nuevo periodo
+        is_closed = elapsed_seconds < 10
+        
+        return is_closed, max(1, seconds_to_close)
+    
+    def wait_for_candle_close(self, timeframe: str, max_wait: int = 300) -> bool:
+        """
+        Espera hasta el cierre de la próxima vela del timeframe especificado.
+        
+        Args:
+            timeframe: Timeframe a esperar
+            max_wait: Máximo tiempo de espera en segundos (default: 300 = 5 min)
+            
+        Returns:
+            bool: True si se completó la espera, False si se excedió max_wait
+        """
+        is_closed, seconds_to_close = self.is_candle_closed(timeframe)
+        
+        if is_closed:
+            self.logger.info(f"Vela de {timeframe} recién cerrada, continuando...")
+            return True
+        
+        if seconds_to_close > max_wait:
+            self.logger.warning(f"Tiempo hasta próximo cierre ({seconds_to_close}s) excede max_wait ({max_wait}s)")
+            return False
+        
+        self.logger.info(f"Esperando {seconds_to_close}s hasta cierre de vela de {timeframe}...")
+        time.sleep(seconds_to_close + 1)  # +1 para asegurar que pasó el cierre
+        return True
+    
     def _initialize_mt5(self) -> bool:
         """
         Inicializa la conexión con MetaTrader 5.
@@ -627,6 +712,18 @@ class MT5LiveDataProvider:
                 self.connected = True
                 self.logger.info(f"MT5 conectado: {self.account_info['name']} @ {self.account_info['server']}")
                 self.logger.info(f"Balance: {self.account_info['balance']}, Equity: {self.account_info['equity']}")
+                
+                # FIX: Validar que AutoTrading esté habilitado
+                terminal_info = mt5.terminal_info()
+                if terminal_info is not None:
+                    if not terminal_info.trade_allowed:
+                        self.logger.error("❌ AUTOTRADING DESHABILITADO en MT5 Terminal!")
+                        self.logger.error("   Solución: Habilitar 'AutoTrading' en MT5 (botón en toolbar)")
+                        return False
+                    else:
+                        self.logger.info("✅ AutoTrading habilitado en MT5 Terminal")
+                else:
+                    self.logger.warning("⚠️ No se pudo verificar estado de AutoTrading")
                 
                 return True
             

@@ -84,7 +84,7 @@ backtesting:
   
   symbols:
     - EURUSD                         # ✅ Símbolo: EURUSD (MT5 Forex)
-  timeframe: 4h                      # Timeframe para Forex
+  timeframe: 4h                      # Timeframe para Forex backtest
   
   # ========== TIPO DE TRADING ==========
   # MT5 Deriv usa margin trading con apalancamiento
@@ -94,7 +94,7 @@ backtesting:
   margin_type: cross                # 'cross' (riesgo compartido)
   margin_leverage: 1                # 1x para demo (sin apalancamiento inicial)
 
-# ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.9)
+# ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.11)
 live_trading:
   # Configuración de cuenta y modo de trading
   account_type: 'DEMO'              # 'DEMO' para Deriv demo account
@@ -102,6 +102,17 @@ live_trading:
   enable_position_limit: true       # Limitar posiciones concurrentes
   max_positions: 5                  # Máximo 5 posiciones concurrentes (v4.9 FIX)
   allow_multiple_positions_same_symbol: true  # Permite múltiples por símbolo (v4.9 FIX)
+  
+  # FIX v4.11: Alinear timeframes entre backtest y live
+  # Backtest usa 4h, live debe usar el mismo o adaptado
+  timeframes: ['4h']                # Usar 4h para consistencia con backtest
+  symbols: ['EURUSD']               # Mismo símbolo que backtest
+  
+  # FIX v4.11: Configuración de barras históricas
+  history_bars: 1000                # 1000+ barras para contexto ML equivalente
+  
+  # FIX v4.11: Deshabilitar agregación por ticks (causa 99.3% duplicación)
+  use_tick_aggregation: false       # Usar datos históricos directos de MT5
   
   # Configuración de riesgo
   risk_per_trade: 0.02              # 2% riesgo por trade
@@ -112,6 +123,11 @@ live_trading:
   position_sync_interval_seconds: 30  # Reducido a 30 seg para sincronización más rápida (v4.9)
   position_sync_interval: 10        # Intervalo entre sincronizaciones
   use_open_orders_only: false       # Usar solo órdenes abiertas para sincronización
+  
+  # FIX v4.11: Intervalos basados en cierre de vela (no fijos)
+  # El sistema ahora sincroniza con cierres de vela automáticamente
+  # Este valor se usa solo como fallback cuando estamos cerca del cierre
+  update_interval_seconds: 5        # Fallback interval (usado solo cerca de cierre de vela)
   
   # Configuración de órdenes
   order_lock_timeout: 30            # Timeout para bloqueo de órdenes
@@ -143,7 +159,7 @@ data:
   use_mt5_for_stocks: true          # ✅ ACTIVADO - Usando MT5 para Volatility Indices
   validate_data: true
 
-# 🔧 CONFIGURACIÓN MT5 - DERIV
+# 🔧 CONFIGURACIÓN MT5 - DERIV (v4.11)
 mt5:
   enabled: true                     # ✅ ACTIVADO - Proveedor principal
   login: 5899273                    # ⚠️ Se carga desde .env: MT5_LOGIN
@@ -151,6 +167,20 @@ mt5:
   server: 'Deriv-Demo'              # Servidor Deriv Demo
   terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'  # Ruta MT5
   timeout: 30000
+  
+  # FIX v4.11: Configuración de datos históricos
+  history_bars: 1000                # 1000+ barras para contexto ML
+  use_tick_aggregation: false       # Deshabilitar agregación por ticks
+  
+  # FIX v4.11: Símbolos y timeframes para live
+  symbols:
+    - EURUSD
+  timeframes:
+    - 4h
+  
+  # Configuración de reintentos
+  max_retries: 3
+  retry_delay: 5
 
 exchanges:
   binance:
