@@ -8,7 +8,13 @@ CCXT Manager: Wrapper mejorado para CCXT con:
 3. Timeout configurable por endpoint
 """
 
-import ccxt
+try:
+    import ccxt
+    CCXT_AVAILABLE = True
+except ImportError:
+    ccxt = None
+    CCXT_AVAILABLE = False
+
 import time
 import random
 import logging

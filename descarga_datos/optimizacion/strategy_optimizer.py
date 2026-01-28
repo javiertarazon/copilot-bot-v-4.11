@@ -150,7 +150,8 @@ class StrategyOptimizer:
             # Si no se pudieron cargar datos, intentar descargar
             logger.info("📥 Intentando descargar datos desde exchange...")
             try:
-                downloader = AdvancedDataDownloader()
+                # Instanciar correctamente con config
+                downloader = AdvancedDataDownloader(self.config)
                 self.data = download_and_cache_data(
                     symbol=self.symbol,
                     timeframe=self.timeframe,
@@ -199,7 +200,9 @@ class StrategyOptimizer:
         # Definir espacio de parámetros CRYPTO-OPTIMIZED
         params = {
             # Parámetros ML - ULTRA PERMISIVO para crypto volatilidad
-            "ml_threshold": trial.suggest_float("ml_threshold", 0.15, 0.45, step=0.05),  # 🔥 CRYPTO: 0.15-0.45 (más señales)
+            # FIX: Optimizar ml_threshold_min que es el que usa la estrategia realmente
+            "ml_threshold_min": trial.suggest_float("ml_threshold_min", 0.40, 0.60, step=0.02),
+            "ml_threshold": trial.suggest_float("ml_threshold", 0.40, 0.60, step=0.02),
             
             # Parámetros de indicadores - CRYPTO FLEXIBLES
             "stoch_overbought": trial.suggest_int("stoch_overbought", 60, 85, step=5),  # 🔥 Más bajo para crypto
@@ -218,6 +221,9 @@ class StrategyOptimizer:
             
             # Parámetros EMA - CRYPTO TRENDS RÁPIDOS
             "ema_trend_period": trial.suggest_int("ema_trend_period", 15, 120, step=5),  # 🔥 Trends más cortos
+            
+            # Filtros de Volumen - DESACTIVADO para sintéticos
+            "volume_threshold": trial.suggest_categorical("volume_threshold", [0]), 
             
             # Parámetros de gestión de riesgo - CRYPTO ULTRA AGRESIVO
             "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.15, step=0.01),  # 🔥 Hasta 15% DD

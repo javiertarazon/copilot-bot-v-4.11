@@ -47,7 +47,7 @@ class OptimizationPipeline:
                  val_end="2023-12-31",
                  opt_start="2022-01-01",
                  opt_end="2023-12-31",
-                 n_trials=300):
+                 n_trials=25):
         """
         Inicializa el pipeline de optimización completo.
 
@@ -192,13 +192,27 @@ class OptimizationPipeline:
             # Fallback: devolver parámetros por defecto en formato correcto (None, [])
             return None, []
 
+        # Configurar objetivos personalizados para el usuario
+        # "Maximizar P&L manteniendo DD < 25%"
+        user_optimization_targets = {
+            'maximize': ['total_pnl', 'win_rate', 'pnl_return'],
+            'minimize': ['max_drawdown'],
+            'constraints': {
+                'min_trades': 20,              # Mínimo razonable
+                'max_drawdown_limit': 0.25,    # Solicitud del usuario: < 25%
+                'min_win_rate': 0.50,          # Mínimo aceptable
+                'min_pnl_return': 0.01         # P&L positivo
+            }
+        }
+
         # Crear optimizador
         optimizer = StrategyOptimizer(
             symbol=symbol,
             timeframe=self.timeframe,
             start_date=self.opt_start,
             end_date=self.opt_end,
-            n_trials=n_trials
+            n_trials=n_trials,
+            optimization_targets=user_optimization_targets
         )
 
         # Ejecutar optimización
@@ -491,7 +505,7 @@ async def main():
                         help='Símbolos a optimizar')
     parser.add_argument('--timeframe', default='4h',
                         help='Timeframe para los datos')
-    parser.add_argument('--trials', type=int, default=50,
+    parser.add_argument('--trials', type=int, default=25,
                         help='Número de trials para optimización')
     parser.add_argument('--quick-test', action='store_true',
                         help='Ejecutar test rápido con 5 trials')
@@ -501,12 +515,12 @@ async def main():
     pipeline = OptimizationPipeline(
         symbols=args.symbols,
         timeframe=args.timeframe,
-        train_start="2025-01-01",
-        train_end="2025-06-30",
-        val_start="2025-07-01",
-        val_end="2025-08-31",
-        opt_start="2025-01-01",
-        opt_end="2025-08-31",
+        train_start="2025-11-01",
+        train_end="2025-12-10",
+        val_start="2025-12-11",
+        val_end="2025-12-25",
+        opt_start="2025-12-26",
+        opt_end="2026-01-10",
         n_trials=args.trials
     )
 

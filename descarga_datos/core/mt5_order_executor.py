@@ -1018,48 +1018,71 @@ class MT5OrderExecutor:
             # Calcular trailing stop
             new_sl = current_sl
             update_needed = False
+            
+            # Obtener configuración de trailing (usar valores de la instancia si no están en la posición)
+            trailing_pct = self.trailing_stop_pct
 
             if position_type == 0:  # BUY
                 # Para compras, el SL sube si el precio sube
-                distance = (
+                # Calcular distancia de trailing basada en configuración
+                if self.config.get("trailing_mode") == "atr" and "atr" in position:
+                     # Modo ATR si estuviéramos guardando ATR en la posición (pendiente implementar)
+                     pass
+                
+                # Por defecto: Porcentaje de la distancia al TP original o Pips fijos
+                distance_to_tp = (
                     position["tp"] - position["price_open"]
                     if position["tp"] > 0
                     else 100 * symbol_info.point
                 )
-                trailing_distance = distance * 0.5  # 50% de la distancia a TP
+                
+                # Si trailing_pct < 1, asumimos que es porcentaje de la distancia (ej. 0.5 = 50%)
+                # Si trailing_pct > 1, asumimos que son pips/puntos
+                if trailing_pct < 1.0:
+                    trailing_distance = distance_to_tp * trailing_pct
+                else:
+                    trailing_distance = trailing_pct * symbol_info.point
 
-                if current_price > position["price_open"] and (
-                    current_sl < position["price_open"] or current_sl == 0
-                ):
-                    # Mover SL al precio de entrada cuando estamos en ganancia
-                    new_sl = position["price_open"]
-                    update_needed = True
-
-                elif current_price > current_sl + trailing_distance and current_sl > 0:
-                    # Ajustar SL hacia arriba manteniendo la distancia de trailing
-                    new_sl = current_price - trailing_distance
-                    update_needed = True
+                # Lógica: Si el precio actual está por encima del Open, y el SL está por debajo
+                if current_price > position["price_open"]:
+                    # 1. Break Even: Si estamos en ganancia suficiente, mover a Entry
+                    if (current_sl < position["price_open"] or current_sl == 0):
+                         # Mover a Break Even + un pequeño buffer
+                         be_buffer = 10 * symbol_info.point # 10 puntos de buffer
+                         new_sl = position["price_open"] + be_buffer
+                         update_needed = True
+                    
+                    # 2. Trailing Dinámico
+                    potential_new_sl = current_price - trailing_distance
+                    if potential_new_sl > current_sl and potential_new_sl > position["price_open"]:
+                        new_sl = potential_new_sl
+                        update_needed = True
 
             else:  # SELL
                 # Para ventas, el SL baja si el precio baja
-                distance = (
+                distance_to_tp = (
                     position["price_open"] - position["tp"]
                     if position["tp"] > 0
                     else 100 * symbol_info.point
                 )
-                trailing_distance = distance * 0.5  # 50% de la distancia a TP
+                
+                if trailing_pct < 1.0:
+                    trailing_distance = distance_to_tp * trailing_pct
+                else:
+                    trailing_distance = trailing_pct * symbol_info.point
 
-                if current_price < position["price_open"] and (
-                    current_sl > position["price_open"] or current_sl == 0
-                ):
-                    # Mover SL al precio de entrada cuando estamos en ganancia
-                    new_sl = position["price_open"]
-                    update_needed = True
+                if current_price < position["price_open"]:
+                    # 1. Break Even
+                    if (current_sl > position["price_open"] or current_sl == 0):
+                        be_buffer = 10 * symbol_info.point
+                        new_sl = position["price_open"] - be_buffer
+                        update_needed = True
 
-                elif current_price < current_sl - trailing_distance and current_sl > 0:
-                    # Ajustar SL hacia abajo manteniendo la distancia de trailing
-                    new_sl = current_price + trailing_distance
-                    update_needed = True
+                    # 2. Trailing Dinámico
+                    potential_new_sl = current_price + trailing_distance
+                    if (potential_new_sl < current_sl or current_sl == 0) and potential_new_sl < position["price_open"]:
+                        new_sl = potential_new_sl
+                        update_needed = True
 
             # Si se necesita actualizar, modificar la posición
             if update_needed:

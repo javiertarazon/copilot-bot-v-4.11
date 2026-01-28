@@ -41,13 +41,17 @@ except ImportError:
     logger.warning("talib wrapper no disponible, usando implementaciones propias")
 
 # Importar DataNormalizer de forma opcional (lazy import para evitar problemas en live trading)
+logger.info("Intentando importar DataNormalizer...")
 try:
     from utils.normalization import DataNormalizer
     NORMALIZER_AVAILABLE = True
-except ImportError as e:
+    logger.info("DataNormalizer importado correctamente.")
+except Exception as e:
     NORMALIZER_AVAILABLE = False
     DataNormalizer = None  # Placeholder
     logger.warning(f"DataNormalizer no disponible: {e}, algunas funciones estarán limitadas")
+
+logger.info("Continuando con imports en technical_indicators...")
 
 from config.config import NormalizationConfig
 from utils.storage import save_to_csv, DataStorage

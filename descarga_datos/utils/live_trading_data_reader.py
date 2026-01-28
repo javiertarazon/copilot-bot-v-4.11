@@ -15,7 +15,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import os
-import ccxt
+try:
+    import ccxt
+    CCXT_AVAILABLE = True
+except ImportError:
+    ccxt = None
+    CCXT_AVAILABLE = False
+    
 from utils.logger import setup_logger
 
 logger = setup_logger('LiveTradingDataReader')

@@ -77,9 +77,30 @@ class AdvancedRiskManager:
         self.logger = get_logger(__name__ + ".AdvancedRiskManager")
         self.trade_history = []
         self.lookback_period = 100  # Número de trades para calcular métricas
+        self.config = RiskConfig()  # Default config
         
         # FASE 7 - TRAILING STOPS: Inicializar gestor de trailing stops
         self.trailing_stop_manager = TrailingStopManager(logger=self.logger)
+
+    def configure(self, config_data: Any):
+        """Configura el Risk Manager con datos externos (dict o objeto config)"""
+        try:
+            if isinstance(config_data, dict):
+                # Actualizar desde diccionario
+                for key, value in config_data.items():
+                    if hasattr(self.config, key):
+                        setattr(self.config, key, value)
+            else:
+                # Intentar extraer info de objeto config global
+                if hasattr(config_data, 'risk_management'):
+                     risk_vars = vars(config_data.risk_management)
+                     for key, value in risk_vars.items():
+                        if hasattr(self.config, key):
+                            setattr(self.config, key, value)
+                            
+            self.logger.info("✅ Risk Manager configurado correctamente")
+        except Exception as e:
+            self.logger.error(f"❌ Error configurando Risk Manager: {e}")
         
     def calculate_kelly_fraction(self, 
                                 win_rate: float, 
@@ -408,6 +429,13 @@ def apply_risk_management(signal: Dict[str, Any],
     logger.info(f"🔄 Iniciando aplicación de gestión de riesgo a señal: {signal.get('action', 'UNKNOWN')} en {signal.get('symbol', 'UNKNOWN')}")
     logger.debug(f"📊 Detalles completos de la señal: {signal}")
     
+    # DEBUG CRÍTICO
+    logger.info(f"DEBUG_RISK: Config received keys: {list(config.keys())}")
+    logger.info(f"DEBUG_RISK: risk_per_trade in config: {config.get('risk_per_trade')}")
+    logger.info(f"DEBUG_RISK: max_risk_per_trade in config: {config.get('max_risk_per_trade')}")
+    logger.info(f"DEBUG_RISK: max_position_crypto in config: {config.get('max_position_crypto')}")
+    logger.info(f"DEBUG_RISK: Account Balance: {account_balance}")
+    
     # Obtener gestor de riesgo
     rm = get_risk_manager()
     
@@ -478,15 +506,18 @@ def apply_risk_management(signal: Dict[str, Any],
     # Calcular position_size: cuánto necesito comprar/vender para arriesgar esa cantidad
     position_size = risk_amount / stop_distance
 
-    # Para cripto, limitar aún más: máximo 0.001 BTC por trade inicialmente
-    max_position_crypto = config.get('max_position_crypto', 0.001)  # Máximo 0.001 BTC
-    position_size = min(position_size, max_position_crypto)
+    # Eliminar límites hardcodeados de crypto (v5.0 Fix)
+    # Usar límites de configuración si existen, sino confiar en el cálculo de riesgo
+    max_position_limit = config.get('max_position_crypto', None)
+    if max_position_limit is not None:
+        position_size = min(position_size, float(max_position_limit))
 
     # Asegurar mínimo viable
-    min_position = config.get('min_position_crypto', 0.0001)  # Mínimo 0.0001 BTC
+    min_position = config.get('min_position_crypto', 0.0001)  # Mínimo configurable
     position_size = max(position_size, min_position)
 
-    logger.info(f"🎯 Tamaño posición MT5-style: {position_size:.6f} (riesgo: ${risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")    # Verificar límites de exposición - MT5 style (muy conservador)
+    logger.info(f"🎯 Tamaño posición (Riesgo ajustado): {position_size:.6f} (riesgo: ${risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")
+
     max_position_size = config.get('max_position_size', 0.01)  # Solo 1% del balance máximo
     max_position_value = account_balance * max_position_size
     position_value = position_size * entry_price
@@ -536,3 +567,26 @@ def apply_risk_management(signal: Dict[str, Any],
     logger.info(f"✅ Gestión de riesgo aplicada: size={position_size}, riesgo={risk_amount:.2f} ({risk_percent}%)")
     
     return signal
+# ============================================================================== 
+# SINGLETON FACTORY IMPLEMENTATION
+# ==============================================================================
+
+_RISK_MANAGER_INSTANCE = None
+
+def get_risk_manager(config: Optional[Any] = None) -> AdvancedRiskManager:
+    """
+    Patrón Singleton robusto para obtener el RiskManager.
+    Si se pasa 'config', se intentará configurar / actualizar la instancia.
+    """
+    global _RISK_MANAGER_INSTANCE
+    
+    if _RISK_MANAGER_INSTANCE is None:
+        if config is None:
+            # Si no hay configuración, intentar cargar valores por defecto seguros
+            logger.warning("[RISK_FACTORY] Inicializando RiskManager sin configuración explícita.")
+            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
+        else:
+            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
+            _RISK_MANAGER_INSTANCE.configure(config)
+            
+    return _RISK_MANAGER_INSTANCE

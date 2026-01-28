@@ -51,13 +51,14 @@ class TrailingStopState:
     
     # Stop prices
     current_stop: float
+    initial_stop_price: float = 0.0 # Stop inicial para cálculo de breakeven
     highest_price: float = 0.0  # Long: máximo alcanzado
     lowest_price: float = float('inf')  # Short: mínimo alcanzado
     
     # Configuration
     atr_period: int = 14
     atr_multiplier: float = 2.25
-    stop_distance_percent: float = 0.02  # 2% trailing
+    stop_distance_percent: float = 0.80  # 80% trailing (ajustado por petición usuario)
     
     # State
     last_update: datetime = field(default_factory=datetime.now)
@@ -166,6 +167,7 @@ class TrailingStopManager:
             entry_time=datetime.now(),
             stop_type=stop_type,
             current_stop=initial_stop,
+            initial_stop_price=initial_stop,
             highest_price=highest_price,
             lowest_price=lowest_price,
             atr_multiplier=self.default_atr_multiplier,
@@ -227,6 +229,16 @@ class TrailingStopManager:
                         new_stop = current_price - (atr_value * self.default_atr_multiplier)
                     else:
                         new_stop = current_price * 0.98
+
+                    # BREAKEVEN LOGIC: Si ganancia > 25% del riesgo inicial, asegurar BreakEven
+                    risk_amount = abs(stop_state.entry_price - stop_state.initial_stop_price)
+                    current_profit = current_price - stop_state.entry_price
+                    
+                    if risk_amount > 0 and current_profit > (risk_amount * 0.25):
+                        # Asegurar al menos el precio de entrada + pequeña ganancia (0.1%)
+                        be_price = stop_state.entry_price * 1.001
+                        new_stop = max(new_stop, be_price)
+                        self.logger.debug(f"🛡️ Breakeven activado para {position_id} (Profit: {current_profit:.2f}, Risk: {risk_amount:.2f})")
                     
                     if new_stop > stop_state.current_stop:
                         stop_state.current_stop = new_stop
@@ -259,6 +271,16 @@ class TrailingStopManager:
                         new_stop = current_price + (atr_value * self.default_atr_multiplier)
                     else:
                         new_stop = current_price * 1.02
+
+                    # BREAKEVEN LOGIC: Si ganancia > 25% del riesgo inicial, asegurar BreakEven
+                    risk_amount = abs(stop_state.entry_price - stop_state.initial_stop_price)
+                    current_profit = stop_state.entry_price - current_price # Short profit
+                    
+                    if risk_amount > 0 and current_profit > (risk_amount * 0.25):
+                        # Asegurar al menos el precio de entrada - pequeña ganancia (0.1%)
+                        be_price = stop_state.entry_price * 0.999
+                        new_stop = min(new_stop, be_price)
+                        self.logger.debug(f"🛡️ Breakeven activado para {position_id} (Profit: {current_profit:.2f}, Risk: {risk_amount:.2f})")
                     
                     if new_stop < stop_state.current_stop:
                         stop_state.current_stop = new_stop

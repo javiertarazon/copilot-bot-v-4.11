@@ -28,6 +28,16 @@ import sys
 import subprocess
 import socket
 import json
+from pathlib import Path
+
+# ==============================================================================
+# ROBUST PATH CONFIGURATION (PROFESSIONAL FIX)
+# ==============================================================================
+# Determine project root relative to this file location, not CWD
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+    print(f"[SYSTEM] Added {PROJECT_ROOT} to sys.path")
 
 # ============================================================================= 
 # FIX PARA UNICODE EN WINDOWS
@@ -68,6 +78,7 @@ def verificar_entorno_ejecucion():
 
     # Buscar config en múltiples ubicaciones posibles
     rutas_config = [
+        str(PROJECT_ROOT / 'config/config.yaml'),  # ABSOLUTE PATH (Best)
         'config/config.yaml',                    # Desde descarga_datos/
         'descarga_datos/config/config.yaml',     # Desde raíz del proyecto
         '../config/config.yaml',                 # Desde subdirectorio
@@ -194,8 +205,17 @@ def validate_system(dashboard_only: bool = False, mode: str = 'backtest'):
         print(" Verificando entorno Python...")
         try:
             import pandas
-            import ccxt
-            print(" Dependencias principales instaladas")
+            print(" Pandas instalado")
+            
+            try:
+                import ccxt
+                print(" ccxt instalado")
+            except ImportError:
+                print(" [WARN] ccxt no instalado o con errores - OK si no usas crypto/ccxt")
+            except Exception as e:
+                print(f" [WARN] Error importando ccxt: {e} - OK si no usas crypto/ccxt")
+
+            print(" Dependencias principales verificadas")
             # Verificar wrapper de indicadores técnicos
             try:
                 from utils.talib_wrapper import talib

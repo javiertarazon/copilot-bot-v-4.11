@@ -66,6 +66,7 @@ class LiveTradingOrchestrator:
         self.data_provider = MT5LiveDataProvider(config=self.config['mt5'])
         
         self.order_executor = MT5OrderExecutor(
+            config=self.live_config,
             account_type=self.live_config.get('account_type', 'DEMO'),
             risk_per_trade=self.live_config.get('risk_per_trade', 0.01),
             max_positions=self.live_config.get('max_positions', 5)
@@ -461,6 +462,11 @@ class LiveTradingOrchestrator:
                 # Cada ciclo, verificar si alguna posición debe cerrarse automáticamente
                 self.monitor_open_positions_for_tp_sl()
                 
+                # Actualizar trailing stops (Hard SL en broker)
+                if self.live_config.get('enable_trailing_stop', False):
+                    self.order_executor.update_trailing_stops()
+
+                
                 # Actualizar métricas
                 self._update_metrics()
                 
@@ -693,9 +699,12 @@ class LiveTradingOrchestrator:
                 elif existing_position and existing_position['type'] == 'SELL' and allow_multiple:
                     # NUEVO COMPORTAMIENTO v4.9: Permitir múltiples, pero cerrar contra-posición
                     logger.info(f"[v4.9] Cerrando posición SELL para abrir BUY en {symbol}")
-                    self.order_executor.close_position(symbol)
+                    close_result = self.order_executor.close_position(symbol)
+                    # FIX: Verificar que el cierre fue exitoso antes de continuar
+                    if close_result and not close_result.get('success', False):
+                        logger.error(f"Error cerrando posición SELL para {symbol}: {close_result.get('message', 'Error desconocido')}")
+                        return
                     position_action = "cerrada posición SELL existente"
-                    import time
                     time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
@@ -747,9 +756,12 @@ class LiveTradingOrchestrator:
                 elif existing_position and existing_position['type'] == 'BUY' and allow_multiple:
                     # NUEVO COMPORTAMIENTO v4.9: Permitir múltiples, pero cerrar contra-posición
                     logger.info(f"[v4.9] Cerrando posición BUY para abrir SELL en {symbol}")
-                    self.order_executor.close_position(symbol)
+                    close_result = self.order_executor.close_position(symbol)
+                    # FIX: Verificar que el cierre fue exitoso antes de continuar
+                    if close_result and not close_result.get('success', False):
+                        logger.error(f"Error cerrando posición BUY para {symbol}: {close_result.get('message', 'Error desconocido')}")
+                        return
                     position_action = "cerrada posición BUY existente"
-                    import time
                     time.sleep(1)  # Pequeña pausa para asegurar cierre
                 
                 # Usar stop loss y take profit calculados por la estrategia
@@ -853,6 +865,17 @@ class LiveTradingOrchestrator:
             # FASE 5: Sincronizar cierre con IndexedPositionMonitor (v4.11)
             self._sync_position_to_indexed_monitor(str(position_id), position_data, 'close')
             
+            # Notificar a la estrategia sobre el cierre (para compensación/aprendizaje)
+            strategy_name = position_data.get('strategy')
+            if strategy_name in self.strategy_instances:
+                strategy = self.strategy_instances[strategy_name]
+                if hasattr(strategy, 'on_trade_closed'):
+                    try:
+                        strategy.on_trade_closed(position_data)
+                        logger.info(f" Notificación de cierre enviada a estrategia {strategy_name}")
+                    except Exception as e:
+                        logger.error(f" Error notificando cierre a estrategia: {e}")
+
             # Mover a historial
             self.position_history.append(position_data)
             del self.active_positions[position_id]
@@ -973,33 +996,35 @@ class LiveTradingOrchestrator:
                         close_reason = 'SL_ACTIVATED'
                 
                 # Verificar Trailing Stop si está habilitado
-                if close_reason is None:
-                    trailing_stop_enabled = self.live_config.get('enable_trailing_stop', False)
-                    if trailing_stop_enabled:
-                        trailing_stop_pct = float(self.live_config.get('trailing_stop_pct', 0.65)) / 100
-                        
-                        # Calcular trailing stop level
-                        if position_type.upper() == 'BUY':
-                            # En BUY: si precio sube y luego baja más del 0.65%, cerrar
-                            highest_price = position_data.get('highest_price', open_price)
-                            if current_price > highest_price:
-                                position_data['highest_price'] = current_price
-                            else:
-                                trailing_level = highest_price * (1 - trailing_stop_pct)
-                                if current_price <= trailing_level:
-                                    close_reason = 'TRAILING_STOP_ACTIVATED'
-                                    close_price = current_price
-                        
-                        elif position_type.upper() == 'SELL':
-                            # En SELL: si precio baja y luego sube más del 0.65%, cerrar
-                            lowest_price = position_data.get('lowest_price', open_price)
-                            if current_price < lowest_price:
-                                position_data['lowest_price'] = current_price
-                            else:
-                                trailing_level = lowest_price * (1 + trailing_stop_pct)
-                                if current_price >= trailing_level:
-                                    close_reason = 'TRAILING_STOP_ACTIVATED'
-                                    close_price = current_price
+                # FIX V5: Lógica centralizada en MT5OrderExecutor.update_trailing_stops()
+                # Se deshabilita la lógica local para evitar conflictos de redundancia.
+                # if close_reason is None:
+                #     trailing_stop_enabled = self.live_config.get('enable_trailing_stop', False)
+                #     if trailing_stop_enabled:
+                #         trailing_stop_pct = float(self.live_config.get('trailing_stop_pct', 0.65)) / 100
+                #         
+                #         # Calcular trailing stop level
+                #         if position_type.upper() == 'BUY':
+                #             # En BUY: si precio sube y luego baja más del 0.65%, cerrar
+                #             highest_price = position_data.get('highest_price', open_price)
+                #             if current_price > highest_price:
+                #                 position_data['highest_price'] = current_price
+                #             else:
+                #                 trailing_level = highest_price * (1 - trailing_stop_pct)
+                #                 if current_price <= trailing_level:
+                #                     close_reason = 'TRAILING_STOP_ACTIVATED'
+                #                     close_price = current_price
+                #         
+                #         elif position_type.upper() == 'SELL':
+                #             # En SELL: si precio baja y luego sube más del 0.65%, cerrar
+                #             lowest_price = position_data.get('lowest_price', open_price)
+                #             if current_price < lowest_price:
+                #                 position_data['lowest_price'] = current_price
+                #             else:
+                #                 trailing_level = lowest_price * (1 + trailing_stop_pct)
+                #                 if current_price >= trailing_level:
+                #                     close_reason = 'TRAILING_STOP_ACTIVATED'
+                #                     close_price = current_price
                 
                 # Si alguna condición se activó, cerrar la posición
                 if close_reason:

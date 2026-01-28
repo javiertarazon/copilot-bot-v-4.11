@@ -92,13 +92,19 @@ class AdvancedBacktester(Backtester):
             Diccionario con resultados del backtesting.
         """
         self.logger.info(f"Iniciando backtesting para {symbol} {timeframe} con estrategia {type(strategy).__name__}")
+        
+        # FIX: Guardar comisión y slippage originales para evitar acumulación
+        original_commission = self.commission
+        original_slippage = self.slippage
+        
         # Ajuste dinámico de comisión y slippage según volatilidad (ATR/Precio)
         if 'atr' in data.columns and 'close' in data.columns:
             rel_atr = data['atr'] / data['close']
             vol_factor = rel_atr.mean()
             self.logger.info(f"Ajustando comisión y slippage por volatilidad: factor={vol_factor:.4f}")
-            self.commission *= (1 + vol_factor)
-            self.slippage *= (1 + vol_factor)
+            # FIX: Aplicar factor sobre valores originales, no sobre valores ya modificados
+            self.commission = original_commission * (1 + vol_factor)
+            self.slippage = original_slippage * (1 + vol_factor)
 
         try:
             # La estrategia debe tener un método `run` que devuelva un diccionario de resultados.
@@ -139,55 +145,24 @@ class AdvancedBacktester(Backtester):
 
                     # Actualizar peak y calcular drawdown actual (solo para logging)
                     peak_value = max(peak_value, new_balance)
-                    current_drawdown = (peak_value - new_balance) / peak_value if peak_value > 0 else 0
-
+                    
                     # NO truncar la equity curve - el backtesting debe mostrar la curva completa
-                    # El truncamiento solo aplica para trading en vivo, no para análisis histórico
-                    # if current_drawdown > strategy_max_drawdown:
-                    #     # Truncar la equity_curve hasta este punto
-                    #     balances = balances[:-1]  # Remover el último balance que causó el exceso
-                    #     break
-
+                
                 equity_curve = pd.Series(balances)
-            # Usar la lista de datos de compensación (dicts) en vez de cantidad
-            compensation_trades_list = strategy_results.get('compensation_trades_data', [])
-            if not isinstance(compensation_trades_list, list):
-                # A veces 'compensation_trades' puede ser entero; ignorar
-                compensation_trades_list = []
-
-            # Si la estrategia ya calculó métricas (parciales o completas), priorizarlas
-            # Desactivamos uso de métricas pre-calc por estrategia para forzar cálculo avanzado
-            # has_strategy_metrics = any(k in strategy_results for k in [
-            #     'total_trades', 'win_rate', 'total_pnl', 'equity_curve', 'profit_factor', 'max_drawdown'
-            # ])
-            # if has_strategy_metrics:
-            #     strategy_results.setdefault('symbol', symbol)
-            #     # Normalizar equity_curve...
-            #     eq = strategy_results.get('equity_curve')
-            #     try:
-            #         if isinstance(eq, pd.Series):
-            #             strategy_results['equity_curve'] = eq.to_list()
-            #         elif hasattr(eq, 'tolist') and not isinstance(eq, list):
-            #             strategy_results['equity_curve'] = eq.tolist()
-            #     except Exception:
-            #         pass
-            #     self.logger.info(f"Ignorando métricas proporcionadas por la estrategia para {symbol}")
-            #     # Continuar para cálculo de métricas avanzadas
-            
-
-            if not trades:
-                self.logger.warning(f"No se generaron trades para {symbol}.")
-                return self._get_empty_metrics()
 
             # Calcular métricas avanzadas basadas en los trades y la equity curve
-            # El método `calculate_advanced_metrics` ahora recibirá los trades de compensación
+            # Se usa el sistema de compensación si está habilitado y hay trades disponibles
+            compensation_trades_list = []
+            if self.compensation_enabled and hasattr(self.risk_manager, 'compensation_trades'):
+                 compensation_trades_list = self.risk_manager.compensation_trades
+
             metrics = self.calculate_advanced_metrics(
                 trades=trades,
                 equity_curve=equity_curve,
                 compensation_trades_list=compensation_trades_list,
                 symbol=symbol
             )
-
+            
             self.logger.info(f"[SUCCESS] Backtesting para {symbol} completado. "
                            f"Trades: {metrics.get('total_trades', 0)}, "
                            f"P&L Total: ${metrics.get('total_pnl', 0):.2f}, "
@@ -198,6 +173,11 @@ class AdvancedBacktester(Backtester):
         except Exception as e:
             self.logger.error(f"[CRITICAL] Error fatal durante el backtesting de {symbol}: {e}", exc_info=True)
             return self._get_empty_metrics()
+            
+        finally:
+            # FIX: Restaurar valores originales de comisión y slippage para evitar acumulación
+            self.commission = original_commission
+            self.slippage = original_slippage
 
     def _create_mock_result(self, symbol: str) -> Dict:
         """Crea un resultado mock básico"""

@@ -533,9 +533,9 @@ class UltraDetailedHeikinAshiMLStrategy:
             self.timeframe = self.config.get('timeframe', '4h')
 
             # Parámetros optimizados desde configuración centralizada
-            self.ml_threshold = self.config.get('ml_threshold', 0.58)  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
-            self.ml_threshold_min = self.config.get('ml_threshold_min', 0.3)  # TEMPORAL: Bajado a 0.3 para testing
-            self.ml_threshold_max = self.config.get('ml_threshold_max', 0.75)  # Máximo rango de confiabilidad ML
+            self.ml_threshold = self.config.get('ml_threshold', 0.45)  # AJUSTADO USUARIO: >45%
+            self.ml_threshold_min = self.config.get('ml_threshold_min', 0.40)  # Filtrar ruido de baja confianza
+            self.ml_threshold_max = self.config.get('ml_threshold_max', 0.85)  # Evitar sobreajuste extremo
             self.stoch_overbought = self.config.get('stoch_overbought', 85)
             self.stoch_oversold = self.config.get('stoch_oversold', 35)
             self.cci_threshold = self.config.get('cci_threshold', 170)
@@ -546,11 +546,32 @@ class UltraDetailedHeikinAshiMLStrategy:
             self._load_symbol_specific_params(config)
 
             # Gestión de riesgo avanzada OPTIMIZADA
-            self.max_drawdown = self.config.get('max_drawdown', 0.05)
-            self.max_portfolio_heat = self.config.get('max_portfolio_heat', 0.06)  # Aumentado a 6%
-            self.max_concurrent_trades = self.config.get('max_concurrent_trades', 3)  # Más oportunidades
-            self.kelly_fraction = self.config.get('kelly_fraction', 0.3)  # Más conservador
-            self.trailing_stop_pct = 0.65  # TRAILING STOP AJUSTADO A 65% PARA MAYOR CONSERVACIÓN DE GANANCIAS
+            self.max_drawdown = self.config.get('max_account_drawdown') or self.config.get('max_drawdown', 0.90)
+            self.max_portfolio_heat = self.config.get('max_portfolio_heat', 0.15)  # Aumentado para mayor capacidad de margen
+            self.max_concurrent_trades = self.config.get('max_concurrent_trades', 1)  # Mantener 1 por símbolo
+            self.kelly_fraction = self.config.get('kelly_fraction', 1.0)
+            self.trailing_stop_pct = self.config.get('trailing_stop_pct', 0.65)  # ✅ CORREGIDO: Lee desde config (era hardcode 0.0)
+
+            # Parámetros de Compensación (Reversal en Pérdida)
+            # FIX: Leer correctamente desde estructura anidada compensation_strategy
+            comp_config = self.config.get('compensation_strategy', {}) if isinstance(self.config, dict) else getattr(config, 'compensation_strategy', {})
+            # Si es objeto Box/Config, convertir a dict si es necesario o acceder atributos
+            if not isinstance(comp_config, dict) and hasattr(comp_config, 'enabled'):
+                 self.compensation_enabled = comp_config.enabled
+            elif isinstance(comp_config, dict):
+                 self.compensation_enabled = comp_config.get('enabled', False)
+            else:
+                 self.compensation_enabled = False
+                 
+            # Fallback a parámetro plano si existe
+            if 'compensation_enabled' in self.config:
+                self.compensation_enabled = self.config['compensation_enabled']
+            
+            self.logger.info(f"Compensation Enabled: {self.compensation_enabled}")
+
+            self.compensation_tp_atr = self.config.get('compensation_tp_atr', 1.0)        # ATR multiplier para TP en reversión (Corto plazo)
+            self.compensation_sl_atr = self.config.get('compensation_sl_atr', 1.0)        # ATR multiplier para SL en reversión
+            self.compensation_risk_factor = self.config.get('compensation_risk_factor', 1.0) # Tamaño de posición relativo al original
 
             # Estado interno
             self.active_trades = []
@@ -560,6 +581,11 @@ class UltraDetailedHeikinAshiMLStrategy:
 
             # Inicializar gestor de modelos ML
             self.ml_manager = MLModelManager(config=self.config)
+            
+            # Estado para compensación en Live Trading
+            self.pending_compensation = None
+            self.consecutive_compensations = 0
+            self.max_consecutive_compensations = self.config.get('max_consecutive_compensations', 1)
 
         except Exception as e:
             self.logger.error(f"Error en init de UltraDetailedHeikinAshiMLStrategy: {e}", exc_info=True)
@@ -842,7 +868,8 @@ class UltraDetailedHeikinAshiMLStrategy:
             raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas")
 
         # 4. Rellenar NaN restantes en indicadores no críticos
-        data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        # FIX: Usar métodos modernos en lugar de fillna(method=) deprecado
+        data = data.bfill().ffill().fillna(0)
 
         print(f"Datos preparados: {len(data)} filas válidas con todos los indicadores")
         return data
@@ -884,6 +911,61 @@ class UltraDetailedHeikinAshiMLStrategy:
             if safe_mode:
                 print(" MODO SEGURO LIVE ACTIVADO")
                 raise ValueError(" MODO SEGURO NO PERMITIDO EN LIVE: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
+
+            # 1. VERIFICAR COMPENSACIÓN PENDIENTE (Prioridad Alta)
+            if self.pending_compensation and self.pending_compensation['symbol'] == symbol:
+                comp_data = self.pending_compensation
+                
+                # Datos actuales
+                current_price = data['close'].iloc[-1]
+                atr = data['atr'].iloc[-1]
+                
+                # Calcular parámetros de recuperación
+                comp_size = comp_data['original_size'] * self.compensation_risk_factor
+                
+                # Breakeven target
+                required_price_move = comp_data['loss_to_recover'] / comp_size
+                comp_tp_dist = required_price_move
+                
+                # Capar TP si es absurdo
+                max_tp_dist = atr * 4.0
+                if comp_tp_dist > max_tp_dist:
+                    comp_tp_dist = max_tp_dist
+                
+                comp_sl_dist = atr * self.compensation_sl_atr
+                
+                if comp_data['direction'] == 'long':
+                    signal_type = 'BUY'
+                    stop_loss_price = current_price - comp_sl_dist
+                    take_profit_price = current_price + comp_tp_dist
+                else:
+                    signal_type = 'SELL'
+                    stop_loss_price = current_price + comp_sl_dist
+                    take_profit_price = current_price - comp_tp_dist
+                
+                # Consumir compensación
+                self.pending_compensation = None
+                
+                print(f"[LIVE COMPENSATION] Ejecutando recuperación {signal_type} @ {current_price}")
+                
+                return {
+                    'signal': signal_type,
+                    'signal_data': {
+                        'current_signal': signal_type,
+                        'entry_price': current_price,
+                        'stop_loss_price': stop_loss_price,
+                        'take_profit_price': take_profit_price,
+                        'position_size': comp_size, # Tamaño forzado para recuperación
+                        'is_compensation': True,
+                        'risk_per_trade': 0, # Irrelevante, usamos size fijo
+                        'ml_confidence': comp_data['ml_confidence'],
+                        'atr': atr,
+                        'timestamp': data.index[-1]
+                    },
+                    'symbol': symbol,
+                    'strategy_name': 'UltraDetailedHeikinAshiMLStrategy',
+                    'ml_confidence': comp_data['ml_confidence']
+                }
 
             # VALIDAR datos mínimos - Más flexible para live trading después de limpieza NaN
             if len(data) < 30:
@@ -950,9 +1032,9 @@ class UltraDetailedHeikinAshiMLStrategy:
         Generar señal usando EXACTAMENTE la misma lógica que _run_backtest
         pero adaptada para live trading - devuelve señal con risk management
         """
-        # Usar EXACTAMENTE los mismos parámetros que _run_backtest
-        risk_per_trade = 0.02  # 2% por trade (más conservador)
-        min_rr_ratio = 2.5     # Risk/Reward mínimo más alto
+        # Usar EXACTAMENTE los mismos parámetros que _run_backtest - desde configuración
+        risk_per_trade = self.config.get('risk_per_trade', 0.02)  # Desde config
+        min_rr_ratio = self.config.get('min_rr_ratio', 2.5)  # Desde config
         max_concurrent_trades = self.max_concurrent_trades
 
         # Evaluar ÚLTIMA vela (live trading - solo señal actual)
@@ -1016,11 +1098,13 @@ class UltraDetailedHeikinAshiMLStrategy:
         entry_price = current_price
 
         # STOP LOSS REAL basado en ATR (volatilidad real del mercado)
-        atr_multiplier = 1.5  # 1.5 ATR para stop loss (mismo que backtesting)
+        # FIX: Usar multiplicador de configuración para paridad con backtesting
+        atr_multiplier = getattr(self, 'stop_loss_atr_multiplier', 2.25)
         stop_distance = atr * atr_multiplier
 
-        # TAKE PROFIT REAL: Risk/Reward ratio mínimo
-        take_profit_distance = stop_distance * min_rr_ratio
+        # TAKE PROFIT REAL: Usar multiplicador de configuración
+        tp_multiplier = getattr(self, 'take_profit_atr_multiplier', 3.75)
+        take_profit_distance = atr * tp_multiplier
 
         # Calcular stop loss y take profit prices
         if signal > 0:  # BUY
@@ -1092,8 +1176,8 @@ class UltraDetailedHeikinAshiMLStrategy:
         # 2. MOMENTUM FILTER: RSI - MENOS restrictivo
         rsi = current_row.get('rsi', 50)
         rsi_ok_buy = rsi < 70  # Permitir RSI hasta 70 para compras
-        # Para SELL: Permitir cuando RSI está bajo (sobreventa) = más oportunidades
-        rsi_ok_sell = rsi < 60  # Cambiar umbral a 60 para permitir ventas en sobreventa (RSI 28-29)
+        # Para SELL: Permitir cuando RSI está alto (sobrecompra) = oportunidad de short
+        rsi_ok_sell = rsi > 60  # FIX: Cambiado de < 60 a > 60 para lógica correcta de shorts
 
         # 3. VOLATILITY FILTER: ATR no demasiado alto - MENOS restrictivo
         atr = current_row.get('atr', 0)
@@ -1106,17 +1190,25 @@ class UltraDetailedHeikinAshiMLStrategy:
             return 0
 
         # 4. VOLUME FILTER: Confirmación de volumen - MENOS restrictivo
+        # Si volume_threshold es 0 en config, ignorar chequeo de volumen (para sintéticos)
+        volume_threshold_cfg = getattr(self, 'volume_threshold', 1000)
+        
         volume = current_row.get('volume', 0)
-        if volume <= 0:
+        if volume_threshold_cfg > 0 and volume <= 0:
+             # Solo retornar 0 si el filtro de volumen está activo (>0)
             return 0
 
         # Comparar con promedio de volumen - MENOS restrictivo
-        recent_volume = data['volume'].iloc[max(0, i-20):i+1]
-        avg_volume = recent_volume.mean()
-        if pd.isna(avg_volume) or avg_volume <= 0:
-            avg_volume = volume * 0.5  # Valor por defecto si no hay promedio válido
-        if volume < avg_volume * 0.3:  # BAJADO de 0.5 a 0.3
-            return 0
+        if volume_threshold_cfg > 0:
+            recent_volume = data['volume'].iloc[max(0, i-20):i+1]
+            avg_volume = recent_volume.mean()
+            if pd.isna(avg_volume) or avg_volume <= 0:
+                avg_volume = volume * 0.5  # Valor por defecto si no hay promedio válido
+            
+            # Usar factor de configuración si existe, sino 0.3
+            vol_ratio_min = getattr(self, 'volume_ratio_min', 0.3)
+            if volume < avg_volume * vol_ratio_min: 
+                return 0
 
         # SEÑALES SIMPLIFICADAS - Solo requieren ML + Trend + RSI básico
 
@@ -1195,49 +1287,9 @@ class UltraDetailedHeikinAshiMLStrategy:
         print(f"[DEBUG] NO_SIGNAL: ha_trend_up={ha_trend_up}, rsi_ok_buy={rsi_ok_buy} (RSI={last_row['rsi']:.2f}), volume_ok={volume_ok}, trend_strength={trend_strength}")
         return 'NO_SIGNAL'
 
-        for i in range(1, len(data)):
-            # CONFIRMAR ML confidence (umbral más bajo para testing)
-            ml_conf = ml_confidence.iloc[i]
-            if ml_conf < 0.5: # REDUCIDO AÚN MÁS para asegurar señales
-                continue
-
-            # FILTROS TÉCNICOS MÁS RELAJADOS para testing
-            ha_change_long = data['ha_color_change'].iloc[i] == 1
-            ha_change_short = data['ha_color_change'].iloc[i] == -1
-
-            # RSI: Rango amplio
-            rsi = data['rsi'].iloc[i]
-            rsi_ok = 20 < rsi < 80  # AÚN MÁS AMPLIO
-
-            # Stochastic: Solo evitar extremos absolutos
-            stoch_k = data['stoch_k'].iloc[i]
-            stoch_ok = 10 < stoch_k < 90  # AÚN MENOS RESTRICTIVO
-
-            # Volumen: Mínimo requerimiento
-            volume_ok = data['volume_ratio'].iloc[i] > 0.8  # REDUCIDO AÚN MÁS
-
-            # ATR: Rango amplio
-            atr = data['atr'].iloc[i]
-            atr_pct = atr / data['close'].iloc[i]
-            volatility_ok = atr_pct > 0.001  # SOLO EVITAR VOLATILIDAD MUY BAJA
-
-            # DEBUG: Contar condiciones cumplidas
-            conditions_met = sum([ha_change_long or ha_change_short, rsi_ok, stoch_ok, volume_ok, volatility_ok])
-
-            # SEÑAL LONG: ML + HA + al menos 3 condiciones técnicas
-            if ha_change_long and conditions_met >= 3:
-                signals.iloc[i] = 1  # Long
-                long_signals += 1
-
-            # SEÑAL SHORT: ML + HA + al menos 3 condiciones técnicas
-            elif ha_change_short and conditions_met >= 3:
-                signals.iloc[i] = -1  # Short
-                short_signals += 1
-
-        print(f"Señales ML de ALTA PROBABILIDAD: {long_signals} LONG, {short_signals} SHORT")
-        print(f"Confianza ML promedio en señales: {ml_confidence[signals != 0].mean():.3f}")
-
-        return signals
+    # [CÓDIGO MUERTO ELIMINADO - FIX Enero 2026]
+    # El bloque desde línea 1200 a 1242 estaba después del return y nunca se ejecutaba.
+    # Contenía lógica duplicada de _generate_signals() que no tenía efecto.
 
     def _check_liquidity_score(self, row: pd.Series) -> bool:
         """
@@ -1257,6 +1309,52 @@ class UltraDetailedHeikinAshiMLStrategy:
         # Prints de liquidity ELIMINADOS para no saturar logs
         
         return liquidity_score > self.liquidity_score_min
+
+    def calculate_position_size(self, capital: float, risk_per_trade: float, stop_distance: float, ml_confidence: float) -> float:
+        """
+        Calcular tamaño de posición basado en riesgo, stop loss y confianza ML
+        """
+        if stop_distance == 0:
+            return 0.0
+
+        # 1. Calcular riesgo base en USD
+        risk_usd = capital * risk_per_trade
+
+        # 2. Ajustar riesgo según confianza ML (Kelly Fraction dinámico)
+        # Si confianza es alta (>0.7), usar full risk. Si es baja (<0.5), reducir.
+        # Rango ML típico: 0.4 - 0.8
+        
+        # Normalizar confianza ML a un factor 0.5 - 1.5
+        # 0.5 -> factor 0.5 (mitad de riesgo)
+        # 0.6 -> factor 0.8
+        # 0.7 -> factor 1.0 (riesgo base)
+        # 0.8 -> factor 1.2 (20% más riesgo)
+        
+        ml_factor = 1.0
+        if ml_confidence < 0.6:
+            ml_factor = 0.8
+        elif ml_confidence > 0.75:
+            ml_factor = 1.2
+            
+        risk_usd_adjusted = risk_usd * ml_factor * self.kelly_fraction
+
+        # 3. Calcular tamaño teórico: Riesgo / Distancia al Stop
+        # Ejemplo: Arriesgar $100 con Stop a $50 -> Size = 2 unidades
+        position_size = risk_usd_adjusted / stop_distance
+
+        # 4. Aplicar límites de tamaño máximo (Portfolio Heat)
+        # No invertir más del X% del capital total en una sola operación
+        max_position_value = capital * self.max_portfolio_heat
+        # Estimar precio de entrada (aproximado, no tenemos precio exacto aquí pero stop_distance es relativo al precio)
+        # Asumimos que stop_distance es pequeño relativo al precio, así que size * price es aprox size * (stop / atr_mult) * ...
+        # Mejor usar límites directos si es posible, o simplemente confiar en el riesgo.
+        # Si position_size es muy grande, caparlo.
+        
+        # Límite arbitrario de seguridad: no más de 5 lotes estándar (ajustable)
+        if position_size > 5.0:
+            position_size = 5.0
+            
+        return max(position_size, 0.01) # Mínimo 0.01 lotes
 
     def _run_backtest(self, data: pd.DataFrame, signals: pd.Series, symbol: str, ml_confidence_all: pd.Series) -> Dict:
         """Ejecutar backtesting con GESTIÓN DE RIESGO REAL basada en ATR y volatilidad"""
@@ -1279,7 +1377,19 @@ class UltraDetailedHeikinAshiMLStrategy:
         entry_index = None  # Para tracking de velas desde entrada
 
         # PARÁMETROS DE RIESGO OPTIMIZADOS Y REALES
-        risk_per_trade = 0.02  # 2% por trade (más conservador)
+        # FIX: Leer risk_per_trade de config en lugar de hardcode
+        risk_config = self.config.get('risk_per_trade', 0.02)
+        if risk_config > 1.0:
+             risk_per_trade = risk_config / 100.0
+        else:
+             risk_per_trade = risk_config
+             
+        self.logger.info(f"[DEBUG RISK] Usando risk_per_trade={risk_per_trade} (Base config: {risk_config})")
+        
+        # Desactivar Kelly reduce factor si estamos en modo agresivo (risk > 2%)
+        if risk_per_trade > 0.03:
+            self.kelly_fraction = 1.0 # Full size
+            self.logger.info("[DEBUG RISK] Modo Agresivo detectado: Kelly Fraction set to 1.0 (Full Size)")
         min_rr_ratio = 2.5     # Risk/Reward mínimo más alto
         max_concurrent_trades = self.max_concurrent_trades
 
@@ -1316,19 +1426,16 @@ class UltraDetailedHeikinAshiMLStrategy:
                 entry_index = i  # Guardar índice de entrada
 
                 # STOP LOSS REAL basado en ATR (volatilidad real del mercado)
-                atr_multiplier = 1.5  # 1.5 ATR para stop loss
+                # FIX: Usar multiplicador de configuración en lugar de hardcoded
+                atr_multiplier = getattr(self, 'stop_loss_atr_multiplier', 2.25)
                 stop_distance = atr * atr_multiplier
 
-                # TAKE PROFIT REAL: Risk/Reward ratio mínimo
-                take_profit_distance = stop_distance * min_rr_ratio
+                # TAKE PROFIT REAL: Usar multiplicador de configuración
+                tp_multiplier = getattr(self, 'take_profit_atr_multiplier', 3.75)
+                take_profit_distance = atr * tp_multiplier
 
                 # POSITION SIZE REAL: Basado en riesgo por trade + Kelly fraction
-                risk_amount = capital * risk_per_trade
-                position_size = risk_amount / stop_distance
-
-                # AJUSTE KELLY: Más agresivo con alta confianza ML
-                kelly_adjustment = self.kelly_fraction * ml_conf
-                position_size *= kelly_adjustment
+                position_size = self.calculate_position_size(capital, risk_per_trade, stop_distance, ml_conf)
 
                 # LÍMITES DE PORTFOLIO REALES
                 active_trades_count = len([t for t in self.active_trades if t['status'] == 'open'])
@@ -1372,20 +1479,25 @@ class UltraDetailedHeikinAshiMLStrategy:
                 if unrealized_pnl > 0:  # En ganancia
                     # Calcular profit actual en términos de precio
                     profit_amount = abs(current_price - entry_price)  # Profit en precio
-                    new_stop_distance = profit_amount * self.trailing_stop_pct  # Porcentaje configurable del profit
+                    
+                    # MEJORA AGRESIVA: Solo activar trailing stop si el profit supera un umbral mínimo
+                    # (ej. si profit > 35% del riesgo inicial en precio)
+                    initial_risk_distance = abs(entry_price - stop_loss_price)
+                    if profit_amount > (initial_risk_distance * 0.35):
+                        new_stop_distance = profit_amount * self.trailing_stop_pct  # Protege el X% del profit pico
 
-                    if position > 0:  # Posición larga
-                        new_stop = entry_price + new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más alto)
-                        if new_stop > stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop {self.trailing_stop_pct:.0%} ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-                    else:  # Posición corta
-                        new_stop = entry_price - new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más bajo)
-                        if new_stop < stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop {self.trailing_stop_pct:.0%} ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        if position > 0:  # Posición larga
+                            new_stop = entry_price + new_stop_distance
+                            # Solo mover stop loss si es mejor que el actual (más alto)
+                            if new_stop > stop_loss_price:
+                                stop_loss_price = new_stop
+                                print(f"Trailing stop {self.trailing_stop_pct:.0%} ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        else:  # Posición corta
+                            new_stop = entry_price - new_stop_distance
+                            # Solo mover stop loss si es mejor que el actual (más bajo)
+                            if new_stop < stop_loss_price:
+                                stop_loss_price = new_stop
+                                print(f"Trailing stop {self.trailing_stop_pct:.0%} ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
 
                 # [WARNING] CÓDIGO DUPLICADO ELIMINADO [WARNING]
                 # El siguiente bloque estaba completamente repetido y no tenía efecto adicional
@@ -1453,8 +1565,83 @@ class UltraDetailedHeikinAshiMLStrategy:
 
                 # Actualizar capital
                 capital += pnl
+                
+                # RESET POR DEFECTO (Se sobreescribe si hay compensación)
                 position = 0
+                entry_price_prev = entry_price # Guardar para referencia
                 entry_price = 0
+
+                # LÓGICA DE COMPENSACIÓN (REVERSAL) AUTOMÁTICA
+                # Si el trade cerró en pérdida REAL (ignorar breakeven/stop en 0) y está habilitada
+                # Umbral de pérdida significativa: > $2.0 (para evitar churning en fees)
+                if self.compensation_enabled and pnl < -2.0:
+                    last_trade = trades[-1]
+                    # Evitar cadenas infinitas de compensación (solo 1 nivel)
+                    if not last_trade.get('is_compensation', False):
+                        
+                        # Invertir dirección
+                        comp_direction = 'short' if last_trade['direction'] == 'long' else 'long'
+                        comp_signal = -1 if comp_direction == 'short' else 1
+                        
+                        # Parámetros ajustados para recuperación rápida
+                        comp_atr = last_trade['atr_at_entry'] # Usar ATR original de referencia
+                        # Pero usar ATR actual para SL dinámico si se prefiere
+                        params_atr = atr if atr > 0 else comp_atr
+
+                        # Entry al precio de salida (ejecución inmediata)
+                        comp_entry_price = exit_price
+                        
+                        # Tamaño de posición (Risk Factor)
+                        comp_size = last_trade['position_size'] * self.compensation_risk_factor
+
+                        # --- LÓGICA DE BREAKEVEN EXACTO ---
+                        # Calcular cuánto necesitamos ganar para recuperar la pérdida EXACTA
+                        loss_to_recover = abs(pnl) * 1.01  # +1% buffer para comisiones/slippage
+                        required_price_move = loss_to_recover / comp_size
+                        
+                        # Definir TP exactamente en el punto de breakeven
+                        comp_tp_dist = required_price_move
+                        
+                        # Seguridad: Si el objetivo es absurdo (> 4 ATRs), caparlo para no buscar milagros
+                        max_tp_dist = params_atr * 4.0
+                        if comp_tp_dist > max_tp_dist:
+                            self.logger.warning(f"[REVERSAL] Objetivo de recuperación muy lejano ({comp_tp_dist/params_atr:.1f} ATRs). Capando a 4.0 ATRs.")
+                            comp_tp_dist = max_tp_dist
+
+                        # SL siempre protegido por ATR (no queremos arruinar la cuenta intentando recuperar)
+                        comp_sl_dist = params_atr * self.compensation_sl_atr
+                        
+                        if comp_direction == 'long':
+                            comp_sl_price = comp_entry_price - comp_sl_dist
+                            comp_tp_price = comp_entry_price + comp_tp_dist
+                        else:
+                            comp_sl_price = comp_entry_price + comp_sl_dist
+                            comp_tp_price = comp_entry_price - comp_tp_dist
+                            
+                        # ABRIR POSICIÓN INMEDIATAMENTE
+                        position = comp_signal * comp_size
+                        entry_price = comp_entry_price
+                        entry_time = current_time # Re-usar timestamp actual
+                        entry_index = i
+                        
+                        # Registrar
+                        comp_trade = {
+                            'entry_time': entry_time,
+                            'entry_price': entry_price,
+                            'position_size': comp_size,
+                            'direction': comp_direction,
+                            'stop_loss': comp_sl_price,
+                            'take_profit': comp_tp_price,
+                            'status': 'open',
+                            'symbol': symbol,
+                            'ml_confidence': last_trade['ml_confidence'], # Heredar confianza
+                            'atr_at_entry': params_atr,
+                            'is_compensation': True, # Flag para evitar loops
+                            'parent_pnl': pnl,
+                            'target_recovery': loss_to_recover
+                        }
+                        self.active_trades.append(comp_trade)
+                        print(f"[REVERSAL-BE] 🔄 Recuperación activada i={i}: {comp_direction.upper()} @ {entry_price:.2f} (Target: ${loss_to_recover:.2f} | Dist: {comp_tp_dist:.4f})")
 
                 # Actualizar drawdown
                 peak_value = max(peak_value, capital)
@@ -1463,7 +1650,8 @@ class UltraDetailedHeikinAshiMLStrategy:
 
                 # Check max drawdown
                 if current_drawdown > self.max_drawdown:
-                    break  # Stop trading
+                    self.logger.warning(f"Max drawdown alcanzado ({current_drawdown:.1%}). Deteniendo operaciones.")
+                    break
 
         # Calcular métricas finales
         total_trades = len([t for t in trades if t.get('exit_time')])
@@ -1658,84 +1846,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             return {'should_close': False}
             return {'should_close': False}
 
-    def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,
-                            take_profit_price: float = None) -> Dict:
-        """
-        Determinar si una posición debe cerrarse basado en condiciones de la estrategia
-        Método principal para que el orquestador consulte sobre cierres de posiciones
 
-        Args:
-            position_data: Información completa de la posición
-            current_price: Precio actual
-            entry_price: Precio de entrada
-            take_profit_price: Precio de take profit (opcional)
-
-        Returns:
-            Dict con 'should_close': bool, 'reason': str, y datos adicionales
-        """
-        try:
-            # 1. Verificar trailing stop
-            trailing_check = self.check_trailing_stop(position_data, current_price, entry_price)
-            if trailing_check['should_close']:
-                return trailing_check
-
-            # 2. Verificar take profit si está disponible
-            if take_profit_price:
-                direction = position_data.get('type', position_data.get('direction', 'buy'))
-                if direction in ['buy', 'BUY'] and current_price >= take_profit_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'take_profit',
-                        'exit_price': take_profit_price
-                    }
-                elif direction in ['sell', 'SELL'] and current_price <= take_profit_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'take_profit',
-                        'exit_price': take_profit_price
-                    }
-
-            # 3. Verificar stop loss
-            stop_loss_price = position_data.get('stop_loss')
-            if stop_loss_price:
-                direction = position_data.get('type', position_data.get('direction', 'buy'))
-                if direction in ['buy', 'BUY'] and current_price <= stop_loss_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'stop_loss',
-                        'exit_price': stop_loss_price
-                    }
-                elif direction in ['sell', 'SELL'] and current_price >= stop_loss_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'stop_loss',
-                        'exit_price': stop_loss_price
-                    }
-
-            return {'should_close': False}
-
-        except Exception as e:
-            print(f"[ERROR] Error checking position closure: {e}")
-            return {'should_close': False}
-
-    def _get_empty_results(self, symbol: str) -> Dict:
-        """Retornar resultados vacíos en caso de error"""
-        return {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'win_rate': 0,
-            'total_pnl': 0,
-            'gross_profit': 0,
-            'gross_loss': 0,
-            'profit_factor': 0,
-            'max_drawdown': 0,
-            'final_capital': self.portfolio_value,
-            'return_pct': 0,
-            'symbol': symbol,
-            'strategy_name': 'UltraDetailedHeikinAshiStrategy',
-            'trades': []
-        }
 
     # SEGUNDO MÉTODO should_close_position - EL QUE SE EJECUTA ACTUALMENTE
     def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,

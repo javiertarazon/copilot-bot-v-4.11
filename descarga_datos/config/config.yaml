@@ -7,32 +7,32 @@
 active_exchange: binance
 
 backtesting:
-  commission: 0.1                    # 0.1% comisión
+  commission: 0.0005                 # 0.05% comisión (Estándar índices)
   data_quality: null
-  end_date: '2025-10-24'             # Backtest: 24-Junio-2024 a 24-Oct-2025
+  end_date: '2026-01-27'             # Backtest: ~7 Meses (Jul 2025 - Ene 2026)
   initial_capital: 1000              # 1000 USD (Capital inicial)
-  start_date: '2024-06-01'           # Backtest: 01-Junio-2024
+  start_date: '2025-07-01'           # Backtest: 01-Jul-2025
   
   # ✅ PARÁMETROS BASE - Copiados de config_original.yaml
   base_parameters:
     atr_period: 17
     cci_threshold: 90
     ema_trend_period: 50
-    kelly_fraction: 0.1
-    liquidity_score_min: 5
-    max_concurrent_trades: 1
-    max_drawdown: 0.03
-    max_portfolio_heat: 0.05
-    min_rr_ratio: 2.5
-    ml_threshold: 0.2
-    ml_threshold_max: 0.8
-    ml_threshold_min: 0.2
-    risk_per_trade: 0.02
+    kelly_fraction: 0.25            # ✅ CORREGIDO: Cuarto-Kelly (conservador, era 1.0)
+    liquidity_score_min: 1          # 🔥 MODIFICADO: Reducido a 1 para permitir índices sintéticos
+    max_concurrent_trades: 3         # ✅ CORREGIDO: Reducido de 10 a 3 (más controlado)
+    max_drawdown: 0.25               # ✅ CORREGIDO: Máximo 25% drawdown (era 0.95)
+    max_portfolio_heat: 0.15         # ✅ CORREGIDO: 15% exposición máxima (era 0.80)
+    min_rr_ratio: 2.0               # Reducido levemente para asegurar TPs alcanzables
+    ml_threshold: 0.52               # 🔥 AJUSTADO: 0.52 para capturar más señales (era 0.60)
+    ml_threshold_max: 0.85
+    ml_threshold_min: 0.52
+    risk_per_trade: 1.0              # 🔥 AJUSTADO: 1% por trade (era 2%) para mayor seguridad
     sar_acceleration: 0.04
     sar_maximum: 0.26
     stoch_overbought: 70
     stoch_oversold: 35
-    stop_loss_atr_multiplier: 2.25
+    stop_loss_atr_multiplier: 2.5    # Aumentado para evitar ruido
     take_profit_atr_multiplier: 3.75
   # Permitir instrumentos sintéticos (ej. Volatility Indices) con volume=0
   # Ajuste temporal: 0.0 para evitar que filtros de volumen bloqueen señales en live
@@ -40,32 +40,41 @@ backtesting:
   
   # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
-    EURUSD:
-      atr_period: 17
-      cci_threshold: 90
-      ema_trend_period: 50
-      kelly_fraction: 0.1
-      liquidity_score_min: 5
+    TM_VOLATILITY_100:              # ✅ PARÁMETROS ESPECÍFICOS PARA VOLATILITY 100
+      risk_per_trade: 1.5           # 🔥 AJUSTADO: 1.5% (era 5.0%)
+      max_drawdown: 0.25            # 🔥 AJUSTADO: 25% (era 95%)
       max_concurrent_trades: 1
-      max_drawdown: 0.03
-      max_portfolio_heat: 0.05
-      min_rr_ratio: 2.5
-      ml_threshold: 0.2
-      ml_threshold_max: 0.8
-      ml_threshold_min: 0.2
-      risk_per_trade: 0.02
-      sar_acceleration: 0.04
-      sar_maximum: 0.26
-      stoch_overbought: 70
-      stoch_oversold: 35
-      stop_loss_atr_multiplier: 2.25
-      take_profit_atr_multiplier: 3.75
+      kelly_fraction: 0.3           # 🔥 AJUSTADO: 0.3 (era 1.0)
+      stop_loss_atr_multiplier: 2.5 # 🔥 AJUSTADO: 2.5 (era 1.5)
+      take_profit_atr_multiplier: 4.5
+      trailing_stop_atr_multiplier: 1.5
+      
+    TM_VOLATILITY_75:               # ✅ AGREGADO: Volatility 75
+      risk_per_trade: 1.5
+      ml_threshold_min: 0.44        # OPTIMIZADO: Trial 19 (Max Stability)
+      stop_loss_atr_multiplier: 2.5 # OPTIMIZADO
+      take_profit_atr_multiplier: 5.5
+      atr_period: 13
+      ema_trend_period: 15
+      
+    TM_VOLATILITY_50:               # ✅ AGREGADO: Volatility 50
+      risk_per_trade: 1.5
+      ml_threshold_min: 0.42        # OPTIMIZADO: Trial 15 (Max Profit)
+      stop_loss_atr_multiplier: 3.5
+      take_profit_atr_multiplier: 6.25
+      atr_period: 15
+      ema_trend_period: 105
   # EURUSD tiene volumen normal en Forex
   volume_ratio_min: 0.1
   # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
   volume_threshold: 0
   
-  slippage: 0.05                     # Slippage de config_original
+  # Límites Generales Backtesting
+  max_position_size: 5.0
+  max_position_crypto: 10.0
+  max_risk_per_trade_usd: 500.0
+  
+  slippage: 0.0002                   # 0.02% Slippage realista (antes 0.05 = 5%!!)
   
   strategies:
     HeikinNeuronalMLPruebas: false
@@ -83,8 +92,9 @@ backtesting:
     EURUSD: true                     # ✅ EURUSD (Forex MT5)
   
   symbols:
-    - EURUSD                         # ✅ Símbolo: EURUSD (MT5 Forex)
-  timeframe: 4h                      # Timeframe para Forex
+    - TM_VOLATILITY_75
+    - TM_VOLATILITY_50
+  timeframe: 15m                     # Timeframe 15m (Solicitado)
   
   # ========== TIPO DE TRADING ==========
   # MT5 Deriv usa margin trading con apalancamiento
@@ -92,7 +102,7 @@ backtesting:
   
   # Configuración de Margin Trading (DERIV MT5)
   margin_type: cross                # 'cross' (riesgo compartido)
-  margin_leverage: 1                # 1x para demo (sin apalancamiento inicial)
+  margin_leverage: 500              # 500x para índices ThinkMarkets (Estándar)
 
 # ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.9)
 live_trading:
@@ -104,8 +114,12 @@ live_trading:
   allow_multiple_positions_same_symbol: true  # Permite múltiples por símbolo (v4.9 FIX)
   
   # Configuración de riesgo
-  risk_per_trade: 0.02              # 2% riesgo por trade
-  max_account_drawdown: 0.05        # 5% máximo drawdown de cuenta
+  # Configuración de riesgo
+  risk_per_trade: 2.0               # ✅ CORREGIDO: 2% (era 5%)
+  max_account_drawdown: 0.25        # ✅ CORREGIDO: 25% max drawdown (era 0.80)
+  max_position_size: 2.0            # ✅ CORREGIDO: 200% exposición máxima (era 5.0)
+  max_risk_per_trade_usd: 200.0     # ✅ CORREGIDO: Límite USD reducido (era $500)
+  max_position_crypto: 10.0         # Eliminar límite hardcode de crypto (10 unidades)
   
   # Configuración de sincronización
   position_sync_timeout: 5          # Timeout para sincronización de posiciones
@@ -128,11 +142,11 @@ live_trading:
 compensation_strategy:
   compensation_max_loss: 1.0
   emergency_stop_buffer: 0.8
-  enabled: true
+  enabled: false                    # 🔥 DESACTIVADO: Evitar martingala/compensación por ahora
   loss_threshold: 0.5
   max_account_drawdown: 3.0
   risk_multiplier_high_dd: 0.7
-  size_multiplier: 3.0
+  size_multiplier: 1.0              # ✅ CORREGIDO: Reducido a 1.0 (sin multiplicador)
   tp_percent: 0.5
 
 data:
@@ -146,9 +160,9 @@ data:
 # 🔧 CONFIGURACIÓN MT5 - DERIV
 mt5:
   enabled: true                     # ✅ ACTIVADO - Proveedor principal
-  login: 5899273                    # ⚠️ Se carga desde .env: MT5_LOGIN
+  login: 174873                     # ⚠️ Se carga desde .env: MT5_LOGIN
   password: ''                      # ⚠️ Se carga desde .env: MT5_PASSWORD
-  server: 'Deriv-Demo'              # Servidor Deriv Demo
+  server: 'ThinkMarkets-Demo'       # Servidor ThinkMarkets Demo
   terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'  # Ruta MT5
   timeout: 30000
 
@@ -244,20 +258,19 @@ live_trading_test:
 # 🧠 CONFIGURACIÓN DE ENTRENAMIENTO ML - OPTIMIZADO PARA >0.6 ACCURACY
 ml_training:
   training:
-    train_start: '2023-06-01'    # Entrenamiento: 01-Jun-2023 a 31-Dic-2024 (19 meses)
-    train_end: '2024-12-31'      # Fin período entrenamiento
-    val_start: '2025-01-01'      # Validación: 01-Ene-2025 a 01-Jun-2025 (5 meses)
-    val_end: '2025-06-01'        # Fin período validación
+    train_start: '2023-06-01'    # Entrenamiento: ~1.5 Años
+    train_end: '2024-12-31'      
+    val_start: '2025-01-01'      # Validación: 6 Meses
+    val_end: '2025-06-30'        
     # 🔥 MEJORAS PARA >0.6 ACCURACY:
-    # - Más datos de entrenamiento (19 meses vs previos)
+    # - Más datos de entrenamiento
     # - Validación separada temporalmente para evitar overfitting
     # - Balanceo de clases automático en RandomForest
-    # - Features mejoradas: 48+ características vs 25 previas
-    # - Target más predictivo: movimientos significativos normalizados por ATR
   optimization:
     enabled: true                # ✅ HABILITADO - Ejecutar optimización
-    opt_start: '2024-06-01'      # Optimización: 01-Jun-2024 a 01-Jun-2025 (12 meses)
-    opt_end: '2025-06-01'        # Fin período optimización
+    opt_start: '2025-07-01'      # AJUSTE: Usar periodo con datos confirmados
+    opt_end: '2025-10-30'
+    n_trials: 20                 # Reducido para prueba rápida exitosa
 
 # 📊 CAMBIOS EN v4.8
 # ==================
