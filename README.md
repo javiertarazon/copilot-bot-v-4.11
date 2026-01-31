@@ -1,23 +1,68 @@
-# 🤖 Bot Trader Copilot - Sistema de Trading Automatizado con ML
+# 🤖 Bot Trader Copilot v5.1 - Sistema Multi-Cuenta MT5
 
-**Versión:** 4.9 | **Fecha:** 3 de Noviembre de 2025 | **Estado:** ✅ LIVE MT5 OPERATIVO 24/7
+**Versión:** 5.1 | **Fecha:** 31 de enero de 2026 | **Estado:** ✅ SISTEMA MULTI-CUENTA OPERATIVO
 
-Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad. **Ahora con soporte completo para MetaTrader 5 (Deriv) en modo live con AutoTrading operativo.**
+Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning. **Ahora con sistema multi-cuenta MT5 (ThinkMarkets + ICMarkets) y auditoría técnica completa.**
 
 ---
 
-## 🚀 **VERSIÓN 4.9 - LIVE MT5 COMPLETAMENTE OPERATIVO**
+## 🎯 NOVEDADES v5.1
 
-### ✅ **Cambios Principales en v4.9**
+### 🏦 Sistema Multi-Cuenta Demo
+- **ThinkMarkets Demo** (Principal): Login 175399, Server: ThinkMarkets-Demo
+- **ICMarkets Demo** (Backup): Login 52600804, Server: ICMarketsSC-Demo
+- **Cambio automático** entre cuentas sin edición manual
+- **Gestión centralizada** con scripts de diagnóstico integrados
+
+### 🔍 Auditoría Técnica Exhaustiva
+- **543 archivos** analizados en profundidad
+- **11 problemas** identificados y priorizados (3 críticos, 4 importantes, 4 mejoras)
+- **Plan de acción** estructurado en 3 fases
+- **Documentación integral** con reglas de operación establecidas
+
+### 📚 Documentación Nueva
+- `INSTRUCCIONES_PRIORITARIAS.md` - Reglas fundamentales del sistema
+- `AUDITORIA_TECNICA_COMPLETA.md` - Análisis técnico de 800+ líneas
+- `GUIA_CUENTAS_MT5.md` - Gestión completa de cuentas demo
+- `CHANGELOG_v5.1.md` - Cambios detallados de esta versión
+
+---
+
+## 🚀 INICIO RÁPIDO v5.1
+
+### 1. Gestión de Cuentas MT5
+```bash
+# Ver cuentas disponibles
+python utils/mt5_account_manager.py
+
+# Cambiar a ThinkMarkets (recomendado)
+python utils/mt5_account_manager.py thinkmarkets
+
+# Cambiar a ICMarkets (alternativa)
+python utils/mt5_account_manager.py icmarkets
+
+# Verificar instalación MT5
+python tests/verificar_mt5_instalacion.py
 ```
-🎯 AutoTrading MT5 Habilitado
-   • Error 10027 resuelto y documentado
-   • Sistema diagnóstico completo
-   • Guía paso-a-paso para troubleshooting
-   • Ready para 24/7 live trading
 
-✅ Documentación Completa
-   • GUIA_PASO_A_PASO_ERROR_10027.md (9 pasos detallados)
+### 2. Configuración MT5
+1. **Descargar MT5**: [ThinkMarkets](https://www.thinkmarkets.com/en/trading-platforms/metatrader-5/) o [ICMarkets](https://www.icmarkets.com/global/en/metatrader-5)
+2. **Instalar y abrir MT5**
+3. **Conectar** con credenciales mostradas por el gestor de cuentas
+4. **Habilitar AutoTrading**: Tools → Options → Expert Advisors → Allow automated trading
+5. **Verificar**: `python tests/diagnose_simple.py` (debe mostrar "Trading permitido: True ✅")
+
+### 3. Ejecución del Sistema
+```bash
+# Backtest (validado: 79.9% win rate, 7,896 trades)
+python main.py --backtest
+
+# Live Trading MT5
+python main.py --live-mt5
+
+# Optimización ML (opcional)
+python main.py --optimize
+```
    • SOLUCION_ERROR_10027.md (técnica y solución)
    • RESUMEN_VISUAL_ERROR_10027.md (antes/después)
    • Diagnósticos automáticos en tests/

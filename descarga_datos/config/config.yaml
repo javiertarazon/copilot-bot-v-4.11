@@ -146,9 +146,9 @@ data:
 # 🔧 CONFIGURACIÓN MT5 - DERIV
 mt5:
   enabled: true                     # ✅ ACTIVADO - Proveedor principal
-  login: 5899273                    # ⚠️ Se carga desde .env: MT5_LOGIN
+  login: 175399                     # ⚠️ Se carga desde .env: MT5_LOGIN
   password: ''                      # ⚠️ Se carga desde .env: MT5_PASSWORD
-  server: 'Deriv-Demo'              # Servidor Deriv Demo
+  server: 'ThinkMarkets-Demo'       # Servidor ThinkMarkets Demo
   terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'  # Ruta MT5
   timeout: 30000
 
