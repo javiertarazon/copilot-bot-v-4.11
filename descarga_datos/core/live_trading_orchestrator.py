@@ -401,13 +401,18 @@ class LiveTradingOrchestrator:
                     
                     logger.info(f" Procesando {strategy_name}: {len(symbols)} símbolos, {len(timeframes)} timeframes")
                     
+                    # FIX: Usar el primer timeframe para sincronización de velas
+                    # Todos los timeframes deben estar alineados al mismo tipo (ej: todos 15m o todos 4h)
+                    primary_timeframe = timeframes[0] if timeframes else '15m'
+                    
                     for symbol in symbols:
                         for timeframe in timeframes:
                             logger.info(f" {strategy_name} -> {symbol} {timeframe}")
                             
                             # Obtener datos más recientes - usando método optimizado para MT5
                             # El sistema mantiene cache inteligente y solo actualiza barras nuevas
-                            data = self.data_provider.get_live_data_efficient(symbol, timeframe, bars=200)
+                            # FIX: Incrementar de 200 a 1000+ barras para contexto ML equivalente a backtest
+                            data = self.data_provider.get_live_data_efficient(symbol, timeframe, bars=1000)
                             
                             # 🔧 FIX v4.10: Si data es None, significa que el candle no cambió
                             # (ya fue procesado en ciclo anterior). Skipear para evitar señales duplicadas
@@ -415,11 +420,20 @@ class LiveTradingOrchestrator:
                                 logger.debug(f"  {symbol} {timeframe}: Candle sin cambios. Skipear procesamiento (previene 180x operaciones/15m)")
                                 continue
                             
+                            # FIX: Validar que tenemos velas completas (no en formación)
+                            if len(data) > 0:
+                                last_candle_time = data['time'].iloc[-1]
+                                is_closed, _ = self.data_provider.is_candle_closed(timeframe)
+                                if not is_closed:
+                                    logger.debug(f"  {symbol} {timeframe}: Vela en formación, usando datos hasta vela anterior")
+                                    # Usar solo velas completas (excluir la última que está en formación)
+                                    data = data.iloc[:-1] if len(data) > 1 else data
+                            
                             if len(data) < 50:
                                 logger.warning(f" Datos insuficientes para {symbol} {timeframe}: {len(data)} filas")
                                 continue
                             
-                            logger.info(f" Datos obtenidos: {len(data)} filas para {symbol} {timeframe}")
+                            logger.info(f" Datos obtenidos: {len(data)} filas para {symbol} {timeframe} (velas cerradas)")
                             
                             # Procesar con la estrategia específica
                             self._process_data_with_strategy(strategy_name, strategy, symbol, timeframe, data)
@@ -464,10 +478,30 @@ class LiveTradingOrchestrator:
                 # Actualizar métricas
                 self._update_metrics()
                 
-                logger.info(f"[CYCLE] Ciclo #{cycle_count} completado, esperando {self.live_config.get('update_interval_seconds', 5)} segundos")
+                # FIX: Sincronización basada en cierre de vela en lugar de ciclo fijo
+                # Determinar el timeframe principal para sincronización
+                primary_timeframe = '15m'  # Default
+                if self.strategy_live_configs:
+                    first_strategy = list(self.strategy_live_configs.values())[0]
+                    primary_timeframes = first_strategy.get('timeframes', ['15m'])
+                    primary_timeframe = primary_timeframes[0] if primary_timeframes else '15m'
                 
-                # Dormir según el intervalo configurado
-                time.sleep(self.live_config.get('update_interval_seconds', 5))
+                # Verificar si debemos esperar al cierre de vela o hacer polling rápido
+                is_closed, seconds_to_close = self.data_provider.is_candle_closed(primary_timeframe)
+                
+                if seconds_to_close > 60:
+                    # Si falta más de 1 minuto, esperar con polling cada 10 segundos
+                    wait_time = min(10, seconds_to_close)
+                    logger.info(f"[CYCLE] Ciclo #{cycle_count} completado. Próximo cierre de vela {primary_timeframe} en {seconds_to_close}s. Esperando {wait_time}s...")
+                    time.sleep(wait_time)
+                elif seconds_to_close > 10:
+                    # Si falta entre 10s y 60s, esperar exactamente hasta el cierre
+                    logger.info(f"[CYCLE] Ciclo #{cycle_count} completado. Esperando {seconds_to_close}s hasta cierre de vela {primary_timeframe}...")
+                    time.sleep(seconds_to_close + 1)  # +1 para asegurar que cerró
+                else:
+                    # Si estamos cerca del cierre o justo después, esperar intervalo mínimo
+                    logger.info(f"[CYCLE] Ciclo #{cycle_count} completado. Vela recién cerrada, esperando intervalo mínimo...")
+                    time.sleep(self.live_config.get('update_interval_seconds', 5))
                 
             except Exception as e:
                 logger.error(f" Error en el bucle de procesamiento de datos: {str(e)}")
