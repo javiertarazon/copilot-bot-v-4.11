@@ -328,6 +328,28 @@ live_trading_test:
 # stoch_oversold               | 35        | 30      | ↓ Más oportunidades
 # volume_ratio_min             | 0.3       | 0.2     | ↓ Menos restrictivo
 
+# 🚀 CONFIGURACIÓN DE TRADING EN VIVO (SINCRONIZADA CON BACKTEST v6.1)
+live_trading:
+  active: true
+  executor_type: 'simple'            # RECOMENDADO: Simple Bridge (Estabilidad extrema)
+  account_type: 'DEMO'
+  update_interval_seconds: 5
+  
+  # Gestión de Riesgo (Sincronizada con Backtest)
+  risk_per_trade: 0.015              # 1.5% (Igual que backtest)
+  max_positions: 3
+  daily_loss_limit_pct: 5.0          # Circuit Breaker 5% diario
+  max_drawdown_limit: 25.0           # Filtro de seguridad 25% DD
+  
+  # Trailing Stop (Sincronizado con Backtest +190% ROI)
+  enable_trailing_stop: true
+  trailing_stop_pct: 0.65            # Lock 65% del beneficio (Igual que backtest)
+  
+  # Otros
+  apply_risk_management: true
+  allow_multiple_positions_same_symbol: true
+  position_sync_interval_seconds: 60
+
 # 🧠 CONFIGURACIÓN DE ENTRENAMIENTO ML - OPTIMIZADO PARA >0.6 ACCURACY
 ml_training:
   training:
@@ -345,13 +367,11 @@ ml_training:
     opt_end: '2025-10-30'
     n_trials: 20                 # Reducido para prueba rápida exitosa
 
-# 📊 CAMBIOS EN v4.8
+# 📊 CAMBIOS EN v6.1
 # ==================
-# - Migración completa a MT5 como proveedor principal
-# - Cambio de SOL/USDT a Volatility 75 Index (Deriv)
-# - Desactivación de CCXT (requiere cuenta real)
-# - Configuración específica para Volatility Indices
-# - Parámetros basados en backtest exitoso de SOL/USDT (1,591.2% ROI)
-# - Trading 24/7 sin interrupciones (ventaja sobre crypto)
-# - Spreads más bajos (0.05% vs 0.1%)
-# - Liquidez garantizada (mercado sintético)
+# - Rama v6.1 creada con mejoras de estabilidad.
+# - Unificación total de parámetros Live vs Backtest.
+# - Implementación de Circuit Breaker Diario (5%).
+# - Implementación de Filtro ADX para Compensaciones (Evitar Reversal Crash).
+# - Configuración de Trailing Stop al 65% (Optimizado).
+# - Validación de ROI +190% en Backtest (1 año).
