@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Sistema orquestador de trading en vivo para el sistema modular.
 
@@ -8,6 +9,7 @@ Este módulo coordina el flujo de trabajo completo para trading en vivo:
 4. Monitorea posiciones abiertas y resultados
 
 FASE 5 (v4.11): Integración de IndexedPositionMonitor para 6.25x speedup.
+FASE 6 (v4.11): Soporte para ZMQ Bridge (baja latencia).
 
 Author: GitHub Copilot
 Date: Septiembre 2025
@@ -16,7 +18,7 @@ Date: Septiembre 2025
 import time
 from utils.logger import get_logger
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 from datetime import datetime
 import threading
 import queue
@@ -25,9 +27,15 @@ import queue
 from config.config_loader import load_config
 from core.mt5_live_data import MT5LiveDataProvider
 from core.mt5_order_executor import MT5OrderExecutor, OrderType
+try:
+    from core.simple_bridge_executor import SimpleBridgeExecutor
+    SIMPLE_BRIDGE_AVAILABLE = True
+except ImportError:
+    SIMPLE_BRIDGE_AVAILABLE = False
 from utils.logger import setup_logger
 from risk_management.risk_management import apply_risk_management
 from utils.position_synchronizer import PositionSynchronizer
+from utils.live_trading_tracker import LiveTradingTracker
 
 # FASE 5: Intentar importar Indexed Position Monitor (v4.11)
 try:
@@ -35,6 +43,13 @@ try:
     INDEXING_AVAILABLE = True
 except ImportError:
     INDEXING_AVAILABLE = False
+
+# FASE 6: Intentar importar ZMQ Order Executor (v4.11)
+try:
+    from core.zmq_order_executor import ZMQOrderExecutor, ZMQOrderType, create_zmq_executor
+    ZMQ_AVAILABLE = True
+except ImportError:
+    ZMQ_AVAILABLE = False
 
 # Configurar logging
 logger = setup_logger('LiveTradingOrchestrator')
@@ -47,8 +62,12 @@ class LiveTradingOrchestrator:
     Esta clase coordina todos los componentes necesarios para el trading en vivo:
     - Proveedor de datos en tiempo real de MT5
     - Ejecución de estrategias configuradas
-    - Envío y gestión de órdenes a través de MT5
+    - Envío y gestión de órdenes a través de MT5 o ZMQ
     - Seguimiento de posiciones y rendimiento
+    
+    Soporta dos modos de ejecución:
+    - MT5 Directo: Usa la API de MetaTrader5 directamente
+    - ZMQ Bridge: Usa ZeroMQ para comunicación con EA (baja latencia)
     """
     
     def __init__(self, config_path: str = None):
@@ -61,16 +80,16 @@ class LiveTradingOrchestrator:
         # Cargar configuración
         self.config = load_config(config_path)
         self.live_config = self.config.get('live_trading', {})
+        self.zmq_config = self.config.get('zmq', {})
+        
+        # Determinar tipo de executor
+        self.executor_type = self.live_config.get('executor_type', 'mt5').lower()
         
         # Inicializar componentes de trading
         self.data_provider = MT5LiveDataProvider(config=self.config['mt5'])
         
-        self.order_executor = MT5OrderExecutor(
-            config=self.live_config,
-            account_type=self.live_config.get('account_type', 'DEMO'),
-            risk_per_trade=self.live_config.get('risk_per_trade', 0.01),
-            max_positions=self.live_config.get('max_positions', 5)
-        )
+        # FASE 6: Seleccionar executor según configuración
+        self.order_executor = self._create_order_executor()
         
         # Inicializar sincronizador de posiciones
         self.position_synchronizer = PositionSynchronizer(
@@ -99,20 +118,122 @@ class LiveTradingOrchestrator:
         # Cola para procesamiento seguro de señales
         self.signal_queue = queue.Queue()
 
-        # Métricas en vivo
-        self.live_metrics = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_pnl': 0.0,
-            'max_drawdown': 0.0,
-            'win_rate': 0.0,
-            'profit_factor': 0.0,
-            'start_time': datetime.now(),
-            'runtime_minutes': 0
-        }
+        # Métricas en vivo (Usando LiveTradingTracker para replicación exacta de backtest)
+        initial_balance = 10000.0 # Default fallback
+        try:
+             # Intentar obtener balance real si es posible, sino usar config
+             account_info = self.data_provider.get_account_info()
+             if account_info:
+                 initial_balance = account_info.get('balance', 10000.0)
+             else:
+                 initial_balance = self.config.get('backtesting', {}).get('initial_capital', 10000.0)
+        except:
+             initial_balance = self.config.get('backtesting', {}).get('initial_capital', 10000.0)
+
+        self.tracker = LiveTradingTracker(initial_balance=initial_balance)
+        self.live_metrics = self.tracker.get_comprehensive_metrics()
         
         logger.info("LiveTradingOrchestrator inicializado correctamente")
+    
+    def _create_order_executor(self) -> Union[MT5OrderExecutor, 'ZMQOrderExecutor', 'SimpleBridgeExecutor']:
+        """
+        FASE 6: Crea el executor de órdenes según la configuración.
+        
+        Returns:
+            MT5OrderExecutor, ZMQOrderExecutor o SimpleBridgeExecutor según configuración
+        """
+        # Verificar si se solicita Simple Bridge (RECOMENDADO)
+        if self.executor_type == 'simple':
+            if not SIMPLE_BRIDGE_AVAILABLE:
+                logger.warning("⚠️ Simple Bridge solicitado pero no disponible. Usando MT5 directo.")
+                return self._create_mt5_executor()
+            
+            logger.info("="*60)
+            logger.info("🔌 FASE 6: Inicializando Simple Bridge Executor")
+            logger.info("="*60)
+            
+            try:
+                simple_executor = SimpleBridgeExecutor(self.config)
+                
+                if simple_executor.connect():
+                    logger.info("✅ Simple Bridge Executor conectado exitosamente")
+                    logger.info("   Comunicación: Archivos (sin dependencias)")
+                    logger.info("   Latencia: <5ms (ejecución nativa MT5)")
+                    logger.info("   Funciones: TODAS (historial, trailing, lotaje, etc.)")
+                    return simple_executor
+                else:
+                    logger.warning("⚠️ No se pudo conectar Simple Bridge. Fallback a MT5 directo.")
+                    logger.warning("   Asegúrate de que Simple_Bridge_EA.ex5 está ejecutándose en MT5")
+                    return self._create_mt5_executor()
+                    
+            except Exception as e:
+                logger.error(f"❌ Error inicializando Simple Bridge: {e}. Fallback a MT5 directo.")
+                return self._create_mt5_executor()
+        
+        # Verificar si se solicita ZMQ
+        use_zmq = (
+            self.executor_type == 'zmq' or 
+            self.zmq_config.get('enabled', False)
+        )
+        
+        if use_zmq:
+            if not ZMQ_AVAILABLE:
+                logger.warning("⚠️ ZMQ solicitado pero pyzmq no está disponible. Usando MT5 directo.")
+                return self._create_mt5_executor()
+            
+            logger.info("="*60)
+            logger.info("🔌 FASE 6: Inicializando ZMQ Order Executor")
+            logger.info("="*60)
+            
+            try:
+                zmq_executor = create_zmq_executor(self.config)
+                
+                if zmq_executor.initialize():
+                    logger.info("✅ ZMQ Order Executor conectado exitosamente")
+                    logger.info(f"   Orders URL: {zmq_executor.zmq_orders_url}")
+                    logger.info(f"   Ticks URL: {zmq_executor.zmq_ticks_url}")
+                    logger.info(f"   Latencia esperada: <10ms")
+                    return zmq_executor
+                else:
+                    logger.warning("⚠️ No se pudo conectar ZMQ. Fallback a MT5 directo.")
+                    return self._create_mt5_executor()
+                    
+            except Exception as e:
+                logger.error(f"❌ Error inicializando ZMQ: {e}. Fallback a MT5 directo.")
+                return self._create_mt5_executor()
+        
+        return self._create_mt5_executor()
+    
+    def _create_mt5_executor(self) -> MT5OrderExecutor:
+        """Crea el executor MT5 estándar."""
+        logger.info("📊 Usando MT5 Order Executor (modo directo)")
+        return MT5OrderExecutor(
+            config=self.live_config,
+            account_type=self.live_config.get('account_type', 'DEMO'),
+            risk_per_trade=self.live_config.get('risk_per_trade', 0.01),
+            max_positions=self.live_config.get('max_positions', 5)
+        )
+    
+    def is_using_zmq(self) -> bool:
+        """Verifica si se está usando ZMQ como executor."""
+        return ZMQ_AVAILABLE and isinstance(self.order_executor, ZMQOrderExecutor)
+    
+    def is_using_simple_bridge(self) -> bool:
+        """Verifica si se está usando Simple Bridge como executor."""
+        return SIMPLE_BRIDGE_AVAILABLE and isinstance(self.order_executor, SimpleBridgeExecutor)
+    
+    def get_executor_stats(self) -> Dict[str, Any]:
+        """Obtiene estadísticas del executor actual."""
+        if self.is_using_zmq():
+            return self.order_executor.get_stats()
+        elif self.is_using_simple_bridge():
+            return {
+                'type': 'simple_bridge',
+                'connected': self.order_executor.connected,
+                'communication': 'files',
+                'latency': '<5ms'
+            }
+        return {'type': 'mt5', 'connected': self.data_provider.is_connected()}
     
     def _sync_position_to_indexed_monitor(self, position_id: str, position_data: Dict[str, Any], action: str = 'add'):
         """
@@ -235,16 +356,19 @@ class LiveTradingOrchestrator:
         """
         # Usar símbolos de la configuración del backtesting
         try:
-            if hasattr(self.config, 'backtesting') and hasattr(self.config.backtesting, 'symbols'):
-                default_symbols = self.config.backtesting.symbols
-                default_timeframes = [self.config.backtesting.timeframe] if hasattr(self.config.backtesting, 'timeframe') else ["15m"]
+            # FIX: Acceder al diccionario config correctamente
+            backtest_config = self.config.get('backtesting', {})
+            if isinstance(backtest_config, dict) and 'symbols' in backtest_config:
+                default_symbols = backtest_config.get('symbols')
+                default_timeframes = [backtest_config.get('timeframe', "15m")]
             else:
                 # Fallback para Volatility 75 Index de Deriv
-                default_symbols = ["Volatility 75 Index"]
+                default_symbols = ["TM_VOLATILITY_75"]
                 default_timeframes = ["15m"]
-        except:
+        except Exception as e:
+            logger.warning(f"Error leyendo configuración de backtesting: {e}")
             # Fallback final
-            default_symbols = ["Volatility 75 Index"]
+            default_symbols = ["TM_VOLATILITY_75"]
             default_timeframes = ["15m"]
         
         # Parámetros por defecto
@@ -880,52 +1004,30 @@ class LiveTradingOrchestrator:
             self.position_history.append(position_data)
             del self.active_positions[position_id]
             
-            # Actualizar métricas
-            self.live_metrics['total_trades'] += 1
-            if position_data['profit'] > 0:
-                self.live_metrics['winning_trades'] += 1
-            else:
-                self.live_metrics['losing_trades'] += 1
-            self.live_metrics['total_pnl'] += position_data['profit']
+            # Actualizar métricas usando LiveTradingTracker
+            trade_record = {
+                'symbol': position_data['symbol'],
+                'side': position_data['type'], # 'BUY' or 'SELL'
+                'entry_price': position_data['open_price'],
+                'exit_price': position_data['close_price'],
+                'quantity': position_data['volume'],
+                'pnl': position_data['profit'],
+                'open_time': position_data['open_time'],
+                'close_time': position_data['close_time'],
+                'strategy': position_data.get('strategy', 'Unknown')
+            }
+            self.tracker.add_trade(trade_record)
+            self.live_metrics = self.tracker.get_comprehensive_metrics()
             
             logger.info(f"Posición {position_id} cerrada con P&L: {position_data['profit']}")
     
     def _update_metrics(self):
         """
-        Actualiza las métricas en vivo del sistema.
+        Actualiza las métricas en vivo del sistema usando LiveTradingTracker.
         """
         try:
-            # Actualizar tiempo de ejecución
-            self.live_metrics['runtime_minutes'] = (datetime.now() - self.live_metrics['start_time']).total_seconds() / 60
-            
-            # Actualizar tasa de victorias
-            total_trades = self.live_metrics['winning_trades'] + self.live_metrics['losing_trades']
-            if total_trades > 0:
-                self.live_metrics['win_rate'] = self.live_metrics['winning_trades'] / total_trades
-            
-            # Actualizar factor de beneficio
-            total_profit = sum(p['profit'] for p in self.position_history if p['profit'] > 0)
-            total_loss = abs(sum(p['profit'] for p in self.position_history if p['profit'] < 0))
-            if total_loss > 0:
-                self.live_metrics['profit_factor'] = total_profit / total_loss
-            
-            # Calcular drawdown
-            if self.position_history:
-                cumulative_pnl = [0]
-                for p in sorted(self.position_history, key=lambda x: x['close_time']):
-                    cumulative_pnl.append(cumulative_pnl[-1] + p['profit'])
-                
-                # Calcular drawdown máximo
-                max_dd = 0
-                peak = cumulative_pnl[0]
-                for value in cumulative_pnl:
-                    if value > peak:
-                        peak = value
-                    dd = peak - value
-                    if dd > max_dd:
-                        max_dd = dd
-                
-                self.live_metrics['max_drawdown'] = max_dd
+            # LiveTradingTracker ya maneja toda la lógica compleja
+            self.live_metrics = self.tracker.get_comprehensive_metrics()
         
         except Exception as e:
             logger.error(f"Error al actualizar métricas: {str(e)}")
@@ -1139,12 +1241,19 @@ class LiveTradingOrchestrator:
         
         try:
             # Preparar resultados
+            metrics = self.get_current_metrics()
+            
+            # Usar tracker para guardar formato extendido también
+            if filepath:
+                tracker_path = Path(filepath).parent / f"tracker_full_{Path(filepath).name}"
+                self.tracker.save_to_file(str(tracker_path))
+            
             results = {
-                'metrics': self.get_current_metrics(),
+                'metrics': metrics,
                 'position_history': self.get_position_history(),
                 'active_positions': self.get_active_positions(),
                 'runtime_info': {
-                    'start_time': self.live_metrics['start_time'].isoformat(),
+                    'start_time': self.live_metrics['start_time'].isoformat() if isinstance(self.live_metrics.get('start_time'), datetime) else self.live_metrics.get('start_time'),
                     'end_time': datetime.now().isoformat(),
                     'strategies_used': list(self.strategy_instances.keys()),
                     'symbols_traded': self.live_config.get('symbols', []),

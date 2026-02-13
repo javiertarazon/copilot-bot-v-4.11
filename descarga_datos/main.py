@@ -20,12 +20,111 @@ ARQUITECTURA:
 - config.yaml → Configuración centralizada
 - SQLite → Fuente primaria de datos
 - CSV → Fallback secundario
+
+IMPORTANTE: Este script DEBE ejecutarse desde el entorno virtual.
+Si se ejecuta sin venv, se auto-reiniciará con el Python correcto.
 """
-import argparse
-import asyncio
 import os
 import sys
 import subprocess
+
+# ==============================================================================
+# AUTO-ACTIVACIÓN DE ENTORNO VIRTUAL (DEBE SER LO PRIMERO)
+# ==============================================================================
+
+def _get_venv_python():
+    """Obtiene la ruta al Python del entorno virtual."""
+    # El venv está en la raíz del proyecto (un nivel arriba de descarga_datos)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)  # Subir de descarga_datos a copilot-bot-v-4.11
+    
+    if sys.platform == 'win32':
+        venv_python = os.path.join(project_root, '.venv', 'Scripts', 'python.exe')
+    else:
+        venv_python = os.path.join(project_root, '.venv', 'bin', 'python')
+    
+    return venv_python if os.path.exists(venv_python) else None
+
+def _is_running_in_venv():
+    """Verifica si estamos ejecutando dentro del entorno virtual correcto."""
+    # Método 1: Verificar sys.prefix vs sys.base_prefix
+    in_venv = hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix
+    
+    if not in_venv:
+        # Método 2: Verificar real_prefix (virtualenv antiguo)
+        in_venv = hasattr(sys, 'real_prefix')
+    
+    if not in_venv:
+        return False
+    
+    # Verificar que es el venv CORRECTO (no cualquier venv)
+    venv_python = _get_venv_python()
+    if venv_python:
+        # Normalizar paths para comparación
+        current_exe = os.path.normcase(os.path.normpath(sys.executable))
+        expected_exe = os.path.normcase(os.path.normpath(venv_python))
+        return current_exe == expected_exe
+    
+    return in_venv
+
+def _auto_restart_in_venv():
+    """Re-ejecuta este script usando el Python del entorno virtual."""
+    venv_python = _get_venv_python()
+    
+    if not venv_python:
+        print("=" * 70)
+        print("❌ ERROR CRÍTICO: Entorno virtual no encontrado")
+        print("=" * 70)
+        print()
+        print("El entorno virtual debe estar en:")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        print(f"  {os.path.join(project_root, '.venv')}")
+        print()
+        print("Para crear el entorno virtual:")
+        print(f"  cd {project_root}")
+        print("  python -m venv .venv")
+        print("  .venv\\Scripts\\activate  (Windows)")
+        print("  pip install -r requirements.txt")
+        print()
+        sys.exit(1)
+    
+    # Re-ejecutar con el Python del venv
+    print("=" * 70)
+    print("🔄 Auto-activando entorno virtual...")
+    print("=" * 70)
+    print(f"  Python actual: {sys.executable}")
+    print(f"  Python venv:   {venv_python}")
+    print()
+    
+    # Pasar todos los argumentos originales
+    args = [venv_python] + sys.argv
+    
+    try:
+        # Reemplazar el proceso actual con el del venv
+        if sys.platform == 'win32':
+            # En Windows, usar subprocess porque os.execv no funciona bien
+            result = subprocess.run(args, cwd=os.path.dirname(os.path.abspath(__file__)))
+            sys.exit(result.returncode)
+        else:
+            # En Unix, usar execv para reemplazar el proceso
+            os.execv(venv_python, args)
+    except Exception as e:
+        print(f"❌ Error al re-ejecutar en venv: {e}")
+        sys.exit(1)
+
+# === VERIFICACIÓN AUTOMÁTICA AL INICIO ===
+if not _is_running_in_venv():
+    _auto_restart_in_venv()
+    # Si llegamos aquí, algo salió mal
+    sys.exit(1)
+
+# ==============================================================================
+# A PARTIR DE AQUÍ, GARANTIZADO QUE ESTAMOS EN EL VENV CORRECTO
+# ==============================================================================
+
+import argparse
+import asyncio
 import socket
 import json
 from pathlib import Path
@@ -37,7 +136,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-    print(f"[SYSTEM] Added {PROJECT_ROOT} to sys.path")
+    # print(f"[SYSTEM] Added {PROJECT_ROOT} to sys.path")  # Comentado para menos ruido
 
 # ============================================================================= 
 # FIX PARA UNICODE EN WINDOWS
@@ -46,42 +145,34 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 # =============================================================================
-# VERIFICACIÓN DE ENTORNO DE EJECUCIÓN
+# VERIFICACIÓN DE ENTORNO DE EJECUCIÓN (ADICIONAL)
 # =============================================================================
 
 def verificar_entorno_ejecucion():
     """
     Verifica que el script se ejecute en el entorno correcto:
-    - Entorno virtual de Python activado
-    - Versión de Python 3.11.x
+    - Entorno virtual de Python activado (YA VERIFICADO ARRIBA)
+    - Versión de Python compatible
+    - Configuración encontrada
     """
     errores = []
 
-    # TEMPORALMENTE DESACTIVADO PARA TESTING
-    # # 1. Verificar entorno virtual
-    # if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
-    #     errores.append("❌ ERROR: Debes ejecutar este script dentro de un entorno virtual de Python")
-    #     errores.append("   Solución: Activa el entorno virtual con '.venv\\Scripts\\activate' (Windows)")
-    #     errores.append("   O usa: .venv\\Scripts\\python.exe main.py [argumentos]")
+    # 1. Verificar versión de Python (3.10+ requerido)
+    version_mayor = sys.version_info.major
+    version_menor = sys.version_info.minor
 
-    # # 2. Verificar versión de Python
-    # version_mayor = sys.version_info.major
-    # version_menor = sys.version_info.minor
+    if version_mayor != 3 or version_menor < 10:
+        errores.append(f"❌ ERROR: Versión de Python incompatible: {version_mayor}.{version_menor}")
+        errores.append("   Se requiere Python 3.10 o superior")
+        errores.append(f"   Versión actual: {sys.version}")
 
-    # if version_mayor != 3 or version_menor != 11:
-    #     errores.append(f"❌ ERROR: Versión de Python incorrecta: {version_mayor}.{version_menor}")
-    #     errores.append("   Se requiere Python 3.11.x exactamente")
-    #     errores.append(f"   Versión actual: {sys.version}")
-
-    # 3. Verificar que estamos en el directorio correcto y config existe
+    # 2. Verificar que config existe
     config_encontrado = False
-
-    # Buscar config en múltiples ubicaciones posibles
     rutas_config = [
-        str(PROJECT_ROOT / 'config/config.yaml'),  # ABSOLUTE PATH (Best)
-        'config/config.yaml',                    # Desde descarga_datos/
-        'descarga_datos/config/config.yaml',     # Desde raíz del proyecto
-        '../config/config.yaml',                 # Desde subdirectorio
+        str(PROJECT_ROOT / 'config/config.yaml'),
+        'config/config.yaml',
+        'descarga_datos/config/config.yaml',
+        '../config/config.yaml',
     ]
 
     for ruta in rutas_config:
@@ -92,26 +183,26 @@ def verificar_entorno_ejecucion():
     if not config_encontrado:
         errores.append("❌ ERROR: No se encuentra config/config.yaml")
         errores.append("   Asegúrate de ejecutar desde el directorio descarga_datos/")
-        errores.append("   O desde la raíz del proyecto usando los scripts de lanzamiento")
 
     if errores:
         print("\n" + "="*70)
-        print("[X] VERIFICACION DE ENTORNO FALLIDA")
+        print("❌ VERIFICACIÓN DE ENTORNO FALLIDA")
         print("="*70)
         for error in errores:
             print(error)
-        print("\n" + "="*70)
+        print("="*70 + "\n")
         sys.exit(1)
 
     # Si todo está bien, mostrar confirmación
-    print("[OK] Verificacion de entorno exitosa:")
-    print(f"   * Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
-    print("   * Entorno virtual activado (temporalmente desactivado)")
-    print("   * Configuracion encontrada")
+    print("✅ Verificación de entorno exitosa:")
+    print(f"   • Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    print(f"   • Entorno virtual: {sys.prefix}")
+    print("   • Configuración encontrada")
     print()
 
 # Ejecutar verificación antes de cualquier otra cosa
 verificar_entorno_ejecucion()
+
 from pathlib import Path
 
 # Importar constantes específicas de subprocess para compatibilidad
@@ -605,6 +696,13 @@ async def run_backtest():
         print(f"   Capital inicial: ${config.backtesting.initial_capital}")
         print(f"   Timeframe: {config.backtesting.timeframe}")
         print(f"   Símbolos: {config.backtesting.symbols}")
+        
+        # FORZAR FECHAS OOS SI EXISTEN EN CONFIG
+        if hasattr(config, 'backtest_oos') and hasattr(config.backtest_oos, 'start_date'):
+             print(f" [OOS] Sobreescribiendo fechas para Out-of-Sample Backtest:")
+             config.backtesting.start_date = config.backtest_oos.start_date
+             config.backtesting.end_date = config.backtest_oos.end_date
+             
         print(f"   Período: {config.backtesting.start_date} → {config.backtesting.end_date}")
         if hasattr(config, 'live_trading'):
             print(f" [CONFIG] Comparación con Live:")

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Advanced Data Downloader - Sistema completo para descarga de datos
+"""Advanced Data Downloader - Sistema completo para descarga de datos
 Soporta CCXT (criptomonedas) y MT5 (acciones) con paralelización,
 manejo de errores, normalización y almacenamiento múltiple.
 """
@@ -564,6 +563,8 @@ class AdvancedDataDownloader:
                     self.logger.warning(f"⚠️ {symbol}: Todos los intentos en {primary_source} fallaron")
         
         # ========== FALLBACK AUTOMÁTICO ==========
+        # FIX: Definir fallback_source antes de usarlo (corregido en auditoría 29-Ene-2026)
+        fallback_source = 'mt5' if primary_source == 'ccxt' else 'ccxt'
         self.logger.info(f"🔄 {symbol}: Intentando fallback a {fallback_source}")
         
         try:
@@ -1361,12 +1362,12 @@ class AdvancedDataDownloader:
             if pattern in error_str:
                 return True
 
-            # Por defecto, considerar retryable (para errores genéricos)
+        # Por defecto, considerar retryable (para errores genéricos)
         return True
 
 
 # ===================== FUNCIÓN DE COMPATIBILIDAD =====================
-def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_date: str, exchange: str = "bybit", config=None) -> Optional[pd.DataFrame]:
+def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_date: str, exchange: str = "bybit") -> Optional[pd.DataFrame]:
     """
     Función de compatibilidad para el sistema de optimización.
     Descarga y cachea datos usando el AdvancedDataDownloader.
@@ -1377,21 +1378,16 @@ def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_da
         start_date: Fecha de inicio en formato YYYY-MM-DD
         end_date: Fecha de fin en formato YYYY-MM-DD
         exchange: Exchange a usar (por defecto 'bybit')
-        config: Configuración opcional (si no se pasa, se carga)
 
     Returns:
         DataFrame con datos OHLCV o None si falla
     """
     try:
-        if config is None:
-            # Importar configuración
-            from config.config_loader import load_config_from_yaml
-            # Cargar configuración
-            config = load_config_from_yaml()
+        # Importar configuración
+        from config.config_loader import load_config_from_yaml
 
-        # Respetar exchange solicitado
-        if hasattr(config, 'active_exchange'):
-            config.active_exchange = exchange
+        # Cargar configuración
+        config = load_config_from_yaml()
 
         # Crear instancia del downloader
         downloader = AdvancedDataDownloader(config)
@@ -1414,45 +1410,25 @@ def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_da
         # La optimización debería manejar este caso
         logging.warning(f"⚠️ No hay datos en caché para {symbol}, intentando descarga...")
 
-        # Intentar descarga simple usando un hilo separado para evitar conflictos de event loop
+        # Intentar descarga simple sin async complications
         try:
-            import threading
-            
-            download_result = {}
-            error_container = {}
+            # Crear un nuevo loop si no existe
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-            def run_download_in_thread():
-                try:
-                    # Crear nuevo loop aislado para este hilo
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    
-                    # Inicializar
-                    new_loop.run_until_complete(downloader.initialize())
-                    
-                    # Descargar
-                    res = new_loop.run_until_complete(
-                        downloader.download_multiple_symbols(
-                            symbols=[symbol],
-                            timeframe=timeframe,
-                            start_date=start_date,
-                            end_date=end_date
-                        )
-                    )
-                    download_result['data'] = res
-                    new_loop.close()
-                except Exception as thread_e:
-                    error_container['error'] = thread_e
-
-            # Ejecutar en hilo
-            t = threading.Thread(target=run_download_in_thread)
-            t.start()
-            t.join()
-
-            if 'error' in error_container:
-                raise error_container['error']
-            
-            result = download_result.get('data')
+            # Ejecutar descarga
+            result = loop.run_until_complete(
+                downloader.download_multiple_symbols(
+                    symbols=[symbol],
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    exchanges=[exchange]
+                )
+            )
 
             if result and symbol in result and result[symbol] is not None:
                 data = result[symbol]

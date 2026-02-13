@@ -122,6 +122,7 @@ class MT5OrderExecutor:
         self.account_type = account_type or self.config.get("account_type", "DEMO")
         self.risk_per_trade = risk_per_trade or self.config.get("risk_per_trade", 0.01)
         self.max_positions = max_positions or self.config.get("max_positions", 5)
+        self.trailing_stop_pct = self.config.get("trailing_stop_pct", 0.5)
         # Configurar logger
         self.logger = setup_logger("MT5OrderExecutor")
         self.connected = False
@@ -241,25 +242,6 @@ class MT5OrderExecutor:
         except Exception as e:
             self.logger.error(f"Error obteniendo precio para {symbol}: {e}")
             return None
-        self.active_positions = {}
-        self.orders_history = {}
-        self.last_errors = {}
-
-        # Risk management
-        self.default_sl_pips = 50
-        self.default_tp_pips = 100
-        self.max_risk_percent = 2.0  # Porcentaje máximo de riesgo por operación
-        self.max_open_positions = 10  # Máximo de posiciones abiertas
-
-        # Carpeta para almacenar historial de operaciones
-        self.trades_path = (
-            Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_trades"
-        )
-        self.trades_path.mkdir(parents=True, exist_ok=True)
-
-        # Inicializar conexión
-        if MT5_AVAILABLE:
-            self._initialize_mt5()
 
     def _initialize_mt5(self) -> bool:
         """
@@ -530,16 +512,9 @@ class MT5OrderExecutor:
                 'message': str(e)
             }
 
-    def close_position(self, position_id: int, volume: float = 0.0) -> Dict:
+    def _close_position_by_ticket(self, position_id: int, volume: float = 0.0) -> Dict:
         """
-        Cierra una posición existente.
-
-        Args:
-            position_id: ID de la posición a cerrar
-            volume: Volumen a cerrar (0 para cerrar toda la posición)
-
-        Returns:
-            Diccionario con resultado de la operación
+        Cierra una posición existente por ID.
         """
         if not self.ensure_connection():
             return self._create_error_result("No hay conexión con MT5")
@@ -726,6 +701,28 @@ class MT5OrderExecutor:
             # Redondear según los dígitos del símbolo
             sl = round(sl, symbol_info.digits)
             tp = round(tp, symbol_info.digits)
+
+            # Validar SL/TP antes de enviar
+            current_price = symbol_info.bid if position["type"] == mt5.POSITION_TYPE_BUY else symbol_info.ask
+            is_buy = position["type"] == mt5.POSITION_TYPE_BUY
+            
+            # Validación básica de lógica (SL vs Precio vs TP)
+            if is_buy:
+                # BUY: SL < Precio < TP
+                if sl > 0 and sl >= current_price:
+                     self.logger.warning(f"⚠️ Ajuste SL inválido para BUY #{position_id}: {sl} >= {current_price}. Usando SL actual.")
+                     sl = position["sl"] # Revertir a SL actual
+                if tp > 0 and tp <= current_price:
+                     self.logger.warning(f"⚠️ Ajuste TP inválido para BUY #{position_id}: {tp} <= {current_price}. Usando TP actual.")
+                     tp = position["tp"]
+            else:
+                # SELL: SL > Precio > TP
+                if sl > 0 and sl <= current_price:
+                     self.logger.warning(f"⚠️ Ajuste SL inválido para SELL #{position_id}: {sl} <= {current_price}. Usando SL actual.")
+                     sl = position["sl"]
+                if tp > 0 and tp >= current_price:
+                     self.logger.warning(f"⚠️ Ajuste TP inválido para SELL #{position_id}: {tp} >= {current_price}. Usando TP actual.")
+                     tp = position["tp"]
 
             # Crear estructura de la modificación
             request = {
@@ -1496,21 +1493,31 @@ class MT5OrderExecutor:
                     }
                 self.logger.info(f"✅ Símbolo {symbol} habilitado correctamente")
             
-            # ✅ VALIDAR VOLUMEN: Ajustar a lote mínimo si es demasiado pequeño
+            # ✅ VALIDAR VOLUMEN: Normalización y límites
             min_lot = symbol_info.volume_min if hasattr(symbol_info, 'volume_min') else 0.01
             max_lot = symbol_info.volume_max if hasattr(symbol_info, 'volume_max') else 100.0
+            volume_step = symbol_info.volume_step if hasattr(symbol_info, 'volume_step') and symbol_info.volume_step > 0 else 0.01
             
-            self.logger.info(f"📊 Lotes para {symbol}: Min={min_lot}, Max={max_lot}, Solicitado={volume}")
+            self.logger.info(f"📊 Lotes para {symbol}: Min={min_lot}, Max={max_lot}, Step={volume_step}, Solicitado={volume}")
             
-            # Si el volumen es menor al mínimo, ajustarlo al mínimo
+            # 1. Normalizar al step más cercano (Rounding)
+            import math
+            if volume_step > 0:
+                volume = round(volume / volume_step) * volume_step
+                # Corregir precisión flotante
+                if volume_step < 1:
+                    decimals = int(round(-math.log10(volume_step), 0))
+                    volume = round(volume, decimals)
+            
+            # 2. Ajustar a límites (Min/Max)
             if volume < min_lot:
-                self.logger.warning(f"⚠️ Volumen {volume} es menor al mínimo {min_lot}, ajustando a {min_lot}")
+                self.logger.warning(f"⚠️ Volumen {volume} < mínimo {min_lot}, ajustando a {min_lot}")
                 volume = min_lot
-            
-            # Si el volumen excede el máximo, limitarlo
-            if volume > max_lot:
-                self.logger.warning(f"⚠️ Volumen {volume} excede máximo {max_lot}, limitando a {max_lot}")
+            elif volume > max_lot:
+                self.logger.warning(f"⚠️ Volumen {volume} > máximo {max_lot}, limitando a {max_lot}")
                 volume = max_lot
+                
+            self.logger.info(f"📊 Volumen final normalizado: {volume}")
             
             # Obtener precio actual si no se proporciona
             current_price = symbol_info.ask if order_type == OrderType.BUY else symbol_info.bid
@@ -1694,14 +1701,14 @@ class MT5OrderExecutor:
             self.logger.error(f"[MT5] Error obteniendo posición para {symbol}: {str(e)}")
             return None
 
-    def close_position(self, symbol: str, volume: float = None, ticket: int = None) -> Dict[str, Any]:
+    def close_position(self, symbol_or_ticket: Union[str, int], volume: float = None, ticket: int = None) -> Dict[str, Any]:
         """
-        Cierra una posición abierta para un símbolo específico.
-
+        Cierra una posición abierta.
+        
         Args:
-            symbol: Símbolo de la posición a cerrar
+            symbol_or_ticket: Símbolo (str) o Ticket (int)
             volume: Volumen específico a cerrar (opcional, cierra todo si None)
-            ticket: Ticket específico de la posición (opcional)
+            ticket: Ticket específico de la posición (opcional override)
 
         Returns:
             Dict con resultado de la operación
@@ -1714,30 +1721,42 @@ class MT5OrderExecutor:
             }
 
         try:
-            # Si se proporciona ticket específico, cerrar esa posición
-            if ticket:
-                positions = mt5.positions_get(ticket=ticket)
-            else:
-                # Obtener posiciones para el símbolo
-                positions = mt5.positions_get(symbol=symbol)
-
+            # Determinar target (ticket o símbolo)
+            target_ticket = ticket
+            target_symbol = None
+            
+            if isinstance(symbol_or_ticket, int):
+                target_ticket = symbol_or_ticket
+            elif isinstance(symbol_or_ticket, str):
+                if symbol_or_ticket.isdigit():
+                    target_ticket = int(symbol_or_ticket)
+                else:
+                    target_symbol = symbol_or_ticket
+            
+            # Buscar posiciones
+            positions = None
+            if target_ticket:
+                positions = mt5.positions_get(ticket=target_ticket)
+            elif target_symbol:
+                positions = mt5.positions_get(symbol=target_symbol)
+            
             if positions is None or len(positions) == 0:
                 return {
                     'success': False,
-                    'message': f'No hay posiciones abiertas para {symbol}',
+                    'message': f'No hay posiciones abiertas para {target_ticket if target_ticket else target_symbol}',
                     'error_code': -1
                 }
 
-            # Cerrar la primera posición encontrada (o la especificada por ticket)
+            # Cerrar la primera posición encontrada
             position = positions[0]
 
             # Determinar tipo de orden de cierre (opuesta a la posición)
             if position.type == mt5.POSITION_TYPE_BUY:
                 order_type = mt5.ORDER_TYPE_SELL
-                price = mt5.symbol_info(symbol).bid
+                price = mt5.symbol_info(position.symbol).bid
             else:
                 order_type = mt5.ORDER_TYPE_BUY
-                price = mt5.symbol_info(symbol).ask
+                price = mt5.symbol_info(position.symbol).ask
 
             # Volumen a cerrar
             close_volume = volume if volume else position.volume
@@ -1745,23 +1764,25 @@ class MT5OrderExecutor:
             # Crear orden de cierre
             close_request = {
                 "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": symbol,
+                "symbol": position.symbol,
                 "volume": close_volume,
                 "type": order_type,
                 "position": position.ticket,
                 "price": price,
-                "deviation": 10,
-                "magic": 0,
+                "deviation": 20,
+                "magic": position.magic,
                 "comment": "Close position",
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": mt5.ORDER_FILLING_FOK,
             }
 
             # Enviar orden de cierre
+            self.logger.info(f"Cerrando posición: #{position.ticket} {position.symbol} {close_volume} lotes")
             result = mt5.order_send(close_request)
 
             if result is None:
                 error_code = mt5.last_error()
+                self.logger.error(f"Error mt5.order_send es None. Code: {error_code}")
                 return {
                     'success': False,
                     'message': f'Error al cerrar posición: {error_code}',
@@ -1770,6 +1791,7 @@ class MT5OrderExecutor:
 
             if result.retcode != mt5.TRADE_RETCODE_DONE:
                 error_msg = self._get_mt5_error_message(result.retcode)
+                self.logger.error(f"Cierre fallido. Retcode: {result.retcode} ({error_msg})")
                 return {
                     'success': False,
                     'message': f'Cierre rechazado: {error_msg}',
@@ -1777,14 +1799,15 @@ class MT5OrderExecutor:
                 }
 
             # Éxito
-            self.logger.info(f"Posición cerrada para {symbol}: ticket {position.ticket}, volumen {close_volume}")
+            self.logger.info(f"Posición cerrada para {position.symbol}: ticket {position.ticket}, volumen {close_volume}")
 
             return {
                 'success': True,
                 'message': f'Posición cerrada correctamente',
+                'profit': position.profit, # Include at top level
                 'position': {
                     'ticket': position.ticket,
-                    'symbol': symbol,
+                    'symbol': position.symbol,
                     'volume_closed': close_volume,
                     'price': result.price,
                     'profit': position.profit
@@ -1792,7 +1815,7 @@ class MT5OrderExecutor:
             }
 
         except Exception as e:
-            self.logger.error(f"Error cerrando posición para {symbol}: {str(e)}")
+            self.logger.error(f"Error cerrando posición: {str(e)}")
             return {
                 'success': False,
                 'message': str(e),
@@ -1919,4 +1942,5 @@ class MT5OrderExecutor:
         """
         Asegura que la conexión se cierre al destruir el objeto.
         """
-        self.shutdown()
+        if hasattr(self, 'disconnect'):
+            self.disconnect()

@@ -403,12 +403,155 @@ class AdvancedRiskManager:
             'kelly_fraction': kelly_fraction
         }
 
-# Instancia global del gestor de riesgo
-risk_manager = AdvancedRiskManager()
+    def check_daily_loss_limit(self, current_balance: float, limit_pct: float = 5.0) -> Tuple[bool, float, float]:
+        """
+        [THOR] CIRCUIT BREAKER: Verifica si se ha alcanzado el límite de pérdida diaria.
+        
+        Args:
+            current_balance: Balance actual de la cuenta.
+            limit_pct: Límite de pérdida diaria en porcentaje (default 5%).
+            
+        Returns:
+            Tuple (is_triggered, daily_pnl_pct, daily_pnl_abs)
+        """
+        today = datetime.now().date()
+        daily_trades = [t for t in self.trade_history if t['timestamp'].date() == today]
+        
+        if not daily_trades:
+            return False, 0.0, 0.0
+            
+        daily_pnl_abs = sum(t['pnl'] for t in daily_trades)
+        
+        # Calcular porcentaje respecto al balance al inicio del día (estimado)
+        # start_balance = current_balance - daily_pnl_abs  (Si pnl es negativo, start era mayor)
+        start_of_day_balance = current_balance - daily_pnl_abs
+        
+        if start_of_day_balance <= 0:
+            return False, 0.0, daily_pnl_abs # Evitar división por cero
+            
+        daily_pnl_pct = (daily_pnl_abs / start_of_day_balance) * 100
+        
+        # Si la pérdida es mayor que el límite (pnl es negativo, así que comparamos < -limit)
+        is_triggered = daily_pnl_pct < -abs(limit_pct)
+        
+        if is_triggered:
+            self.logger.critical(f"🛑 CIRCUIT BREAKER ACTIVADO: Pérdida diaria {daily_pnl_pct:.2f}% excede límite {limit_pct}%")
+            
+        return is_triggered, daily_pnl_pct, daily_pnl_abs
 
-def get_risk_manager() -> AdvancedRiskManager:
-    """Obtiene la instancia global del gestor de riesgo"""
-    return risk_manager
+    def calculate_current_drawdown(self, 
+                                   current_balance: float,
+                                   initial_balance: Optional[float] = None,
+                                   peak_balance: Optional[float] = None) -> Dict[str, float]:
+        """
+        Calcula el drawdown actual en tiempo real.
+        
+        Implementación completa del cálculo de drawdown para usar en apply_risk_management().
+        FIX: Auditoría 29-Ene-2026 - Implementación del TODO.
+        
+        Args:
+            current_balance: Balance actual de la cuenta
+            initial_balance: Balance inicial (opcional, para calcular drawdown desde inicio)
+            peak_balance: Balance máximo histórico (opcional, para calcular desde pico)
+            
+        Returns:
+            Dict con métricas de drawdown:
+            - current_drawdown_pct: Drawdown actual como porcentaje
+            - drawdown_from_initial: Drawdown desde balance inicial
+            - drawdown_from_peak: Drawdown desde pico máximo
+            - peak_balance: Balance pico usado para el cálculo
+            - recovery_needed_pct: Porcentaje de recuperación necesario
+        """
+        try:
+            # Inicializar valores por defecto
+            if initial_balance is None:
+                # Usar balance inicial de config o asumir igual al actual si no hay historial
+                initial_balance = getattr(self.config, 'initial_capital', current_balance)
+            
+            # Calcular pico máximo desde historial de trades si no se proporciona
+            if peak_balance is None:
+                if self.trade_history:
+                    # Reconstruir equity curve desde historial
+                    equity_curve = [initial_balance]
+                    for trade in self.trade_history:
+                        equity_curve.append(equity_curve[-1] + trade.get('pnl', 0))
+                    peak_balance = max(equity_curve)
+                else:
+                    peak_balance = max(initial_balance, current_balance)
+            
+            # Asegurar que el pico sea al menos el balance actual o inicial
+            peak_balance = max(peak_balance, initial_balance)
+            
+            # Calcular drawdown desde pico (el más importante para trading)
+            if peak_balance > 0:
+                drawdown_from_peak = ((peak_balance - current_balance) / peak_balance) * 100
+            else:
+                drawdown_from_peak = 0.0
+            
+            # Calcular drawdown desde balance inicial
+            if initial_balance > 0:
+                drawdown_from_initial = ((initial_balance - current_balance) / initial_balance) * 100
+            else:
+                drawdown_from_initial = 0.0
+            
+            # Usar el mayor de los dos como drawdown actual (más conservador)
+            current_drawdown_pct = max(drawdown_from_peak, 0.0)  # No puede ser negativo
+            
+            # Calcular recuperación necesaria
+            if current_balance > 0 and current_balance < peak_balance:
+                recovery_needed_pct = ((peak_balance - current_balance) / current_balance) * 100
+            else:
+                recovery_needed_pct = 0.0
+            
+            result = {
+                'current_drawdown_pct': round(current_drawdown_pct, 2),
+                'drawdown_from_initial': round(drawdown_from_initial, 2),
+                'drawdown_from_peak': round(drawdown_from_peak, 2),
+                'peak_balance': round(peak_balance, 2),
+                'recovery_needed_pct': round(recovery_needed_pct, 2),
+                'is_in_drawdown': current_drawdown_pct > 0
+            }
+            
+            self.logger.debug(f"Drawdown calculado: {current_drawdown_pct:.2f}% (pico: {peak_balance:.2f})")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando drawdown: {e}")
+            return {
+                'current_drawdown_pct': 0.0,
+                'drawdown_from_initial': 0.0,
+                'drawdown_from_peak': 0.0,
+                'peak_balance': current_balance,
+                'recovery_needed_pct': 0.0,
+                'is_in_drawdown': False
+            }
+
+# ============================================================================== 
+# SINGLETON PATTERN - ÚNICA DEFINICIÓN (FIX: Auditoría 29-Ene-2026)
+# ==============================================================================
+_RISK_MANAGER_INSTANCE = None
+
+def get_risk_manager(config: Optional[Any] = None) -> AdvancedRiskManager:
+    """
+    Patrón Singleton robusto para obtener el RiskManager.
+    Si se pasa 'config', se intentará configurar / actualizar la instancia.
+    
+    NOTA: Esta es la ÚNICA definición de get_risk_manager() en el módulo.
+    La versión anterior (risk_manager = AdvancedRiskManager()) fue eliminada
+    para evitar duplicación y comportamiento inconsistente.
+    """
+    global _RISK_MANAGER_INSTANCE
+    
+    if _RISK_MANAGER_INSTANCE is None:
+        if config is None:
+            logger.warning("[RISK_FACTORY] Inicializando RiskManager sin configuración explícita.")
+            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
+        else:
+            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
+            _RISK_MANAGER_INSTANCE.configure(config)
+            
+    return _RISK_MANAGER_INSTANCE
     
 def apply_risk_management(signal: Dict[str, Any], 
                          account_balance: float,
@@ -445,6 +588,18 @@ def apply_risk_management(signal: Dict[str, Any],
         logger.error(f"❌ Balance de cuenta insuficiente: {account_balance}")
         signal['rejected'] = True
         signal['rejection_reason'] = "Balance insuficiente"
+        return signal
+        
+    # [THOR] CIRCUIT BREAKER DIARIO
+    # Protege la cuenta de días catastróficos apagando el bot si la pérdida excede el límite
+    daily_limit_pct = config.get('daily_loss_limit_pct', 5.0)
+    breaker_triggered, daily_loss_pct, _ = rm.check_daily_loss_limit(account_balance, daily_limit_pct)
+    
+    if breaker_triggered:
+        msg = f"🛑 CIRCUIT BREAKER ACTIVADO: Pérdida diaria {daily_loss_pct:.2f}% excede límite {daily_limit_pct}%"
+        logger.critical(msg)
+        signal['rejected'] = True
+        signal['rejection_reason'] = msg
         return signal
     
     # Extraer y validar datos críticos
@@ -526,10 +681,16 @@ def apply_risk_management(signal: Dict[str, Any],
         logger.warning(f"⚠️ Tamaño ajustado por límite de exposición - Original: {position_size}, Nuevo: {max_position_value/entry_price}")
         position_size = max_position_value / entry_price
     
-    # Verificar límites de drawdown
+    # Verificar límites de drawdown - IMPLEMENTADO: Auditoría 29-Ene-2026
     max_drawdown = config.get('max_drawdown_limit', 20.0)
-    # TODO: Implementar cálculo de drawdown actual en AdvancedRiskManager
-    current_drawdown = 0.0  # Placeholder hasta implementar
+    # Usar RiskManager para calcular drawdown en tiempo real
+    risk_manager = get_risk_manager()
+    initial_capital = config.get('initial_capital', account_balance)
+    drawdown_info = risk_manager.calculate_current_drawdown(
+        current_balance=account_balance,
+        initial_balance=initial_capital
+    )
+    current_drawdown = drawdown_info.get('current_drawdown_pct', 0.0)
     logger.info(f"📉 Drawdown actual: {current_drawdown:.2f}%, Límite: {max_drawdown:.2f}%")
     
     if current_drawdown > max_drawdown:
@@ -567,26 +728,5 @@ def apply_risk_management(signal: Dict[str, Any],
     logger.info(f"✅ Gestión de riesgo aplicada: size={position_size}, riesgo={risk_amount:.2f} ({risk_percent}%)")
     
     return signal
-# ============================================================================== 
-# SINGLETON FACTORY IMPLEMENTATION
-# ==============================================================================
 
-_RISK_MANAGER_INSTANCE = None
-
-def get_risk_manager(config: Optional[Any] = None) -> AdvancedRiskManager:
-    """
-    Patrón Singleton robusto para obtener el RiskManager.
-    Si se pasa 'config', se intentará configurar / actualizar la instancia.
-    """
-    global _RISK_MANAGER_INSTANCE
-    
-    if _RISK_MANAGER_INSTANCE is None:
-        if config is None:
-            # Si no hay configuración, intentar cargar valores por defecto seguros
-            logger.warning("[RISK_FACTORY] Inicializando RiskManager sin configuración explícita.")
-            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
-        else:
-            _RISK_MANAGER_INSTANCE = AdvancedRiskManager()
-            _RISK_MANAGER_INSTANCE.configure(config)
-            
-    return _RISK_MANAGER_INSTANCE
+# FIN DEL MÓDULO - Singleton definido al inicio del archivo después de la clase AdvancedRiskManager

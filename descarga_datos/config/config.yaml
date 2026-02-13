@@ -4,14 +4,14 @@
 # CAPITAL: 10000 USD (demo Deriv)
 # 🔄 ACTUALIZADO: 1-Nov-2025 - Usando MT5 Deriv para Trading con Volatility Indices
 
-active_exchange: binance
+active_exchange: mt5
 
 backtesting:
   commission: 0.0005                 # 0.05% comisión (Estándar índices)
   data_quality: null
-  end_date: '2026-01-27'             # Backtest: ~7 Meses (Jul 2025 - Ene 2026)
-  initial_capital: 1000              # 1000 USD (Capital inicial)
-  start_date: '2025-07-01'           # Backtest: 01-Jul-2025
+  end_date: '2025-01-01'             # ✅ OOS 2024 (1 Año)
+  initial_capital: 5000              # ✅ Capital $5000 (Para probar escala)
+  start_date: '2024-01-01'           # ✅ OOS 2024 (1 Año)
   
   # ✅ PARÁMETROS BASE - Copiados de config_original.yaml
   base_parameters:
@@ -24,20 +24,25 @@ backtesting:
     max_drawdown: 0.25               # ✅ CORREGIDO: Máximo 25% drawdown (era 0.95)
     max_portfolio_heat: 0.15         # ✅ CORREGIDO: 15% exposición máxima (era 0.80)
     min_rr_ratio: 2.0               # Reducido levemente para asegurar TPs alcanzables
-    ml_threshold: 0.52               # 🔥 AJUSTADO: 0.52 para capturar más señales (era 0.60)
+    ml_threshold: 0.45               # 🔙 RESTAURADO FASE 3: 0.45 (Optimo)
     ml_threshold_max: 0.85
-    ml_threshold_min: 0.52
-    risk_per_trade: 1.0              # 🔥 AJUSTADO: 1% por trade (era 2%) para mayor seguridad
+    ml_threshold_min: 0.40           # 🔙 RESTAURADO FASE 3
+    risk_per_trade: 1.5              # Compromiso seguridad/retorno
     sar_acceleration: 0.04
     sar_maximum: 0.26
     stoch_overbought: 70
     stoch_oversold: 35
     stop_loss_atr_multiplier: 2.5    # Aumentado para evitar ruido
     take_profit_atr_multiplier: 3.75
-  # Permitir instrumentos sintéticos (ej. Volatility Indices) con volume=0
-  # Ajuste temporal: 0.0 para evitar que filtros de volumen bloqueen señales en live
-  volume_ratio_min: 0.0
-  
+    # Permitir instrumentos sintéticos (ej. Volatility Indices) con volume=0
+    # Ajuste temporal: 0.0 para evitar que filtros de volumen bloqueen señales en live
+    volume_ratio_min: 0.0
+    # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
+    volume_threshold: 0
+    
+    # [THOR] CIRCUIT BREAKER
+    daily_loss_limit_pct: 5.0        # 🛡️ Límite de pérdida diaria 5%
+
   # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
     TM_VOLATILITY_100:              # ✅ PARÁMETROS ESPECÍFICOS PARA VOLATILITY 100
@@ -59,20 +64,19 @@ backtesting:
       
     TM_VOLATILITY_50:               # ✅ AGREGADO: Volatility 50
       risk_per_trade: 1.5
-      ml_threshold_min: 0.42        # OPTIMIZADO: Trial 15 (Max Profit)
+      ml_threshold_min: 0.38        # 🔥 REBAJADO: de 0.42 a 0.38 para despertar trading
       stop_loss_atr_multiplier: 3.5
       take_profit_atr_multiplier: 6.25
       atr_period: 15
       ema_trend_period: 105
+      
   # EURUSD tiene volumen normal en Forex
   volume_ratio_min: 0.1
-  # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
-  volume_threshold: 0
   
   # Límites Generales Backtesting
   max_position_size: 5.0
   max_position_crypto: 10.0
-  max_risk_per_trade_usd: 500.0
+  max_risk_per_trade_usd: 300.0       # ✅ SINCRONIZADO: Igual que live_trading (era 500.0)
   
   slippage: 0.0002                   # 0.02% Slippage realista (antes 0.05 = 5%!!)
   
@@ -92,6 +96,7 @@ backtesting:
     EURUSD: true                     # ✅ EURUSD (Forex MT5)
   
   symbols:
+    - TM_VOLATILITY_100
     - TM_VOLATILITY_75
     - TM_VOLATILITY_50
   timeframe: 15m                     # Timeframe 15m (Solicitado)
@@ -104,21 +109,40 @@ backtesting:
   margin_type: cross                # 'cross' (riesgo compartido)
   margin_leverage: 500              # 500x para índices ThinkMarkets (Estándar)
 
+# ========== CONFIGURACIÓN ZMQ (ZeroMQ Bridge) ==========
+# Comunicación de baja latencia con EA en MT5
+zmq:
+  enabled: false                    # true para usar ZMQ, false para MT5 directo
+  orders_url: "tcp://localhost:5555"  # URL socket para órdenes (REQ/REP)
+  ticks_url: "tcp://localhost:5556"   # URL socket para ticks (PUB/SUB)
+  timeout_ms: 5000                  # Timeout en milisegundos
+  heartbeat_interval: 10            # Intervalo de heartbeat (segundos)
+  magic_number: 20260129            # Magic number para identificar órdenes del bot
+
 # ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.9)
 live_trading:
+  # ========== TIPO DE EXECUTOR ==========
+  # 'mt5' = API de MetaTrader5 directo (por defecto)
+  # 'zmq' = ZeroMQ Bridge con EA (baja latencia, requiere EA corriendo)
+  # Tipo de ejecutor:
+  # - 'mt5': Conexión directa Python → MT5 (por defecto)
+  # - 'zmq': Comunicación vía ZeroMQ (requiere ZMQ_Bridge_EA compilado)
+  # - 'simple': Simple Bridge EA (archivos, sin dependencias, RECOMENDADO)
+  executor_type: 'simple'           # ✅ RECOMENDADO: Ejecución nativa segura y rápida
+  
   # Configuración de cuenta y modo de trading
   account_type: 'DEMO'              # 'DEMO' para Deriv demo account
   trading_mode: 'margin'            # 'margin' para MT5 Deriv
   enable_position_limit: true       # Limitar posiciones concurrentes
-  max_positions: 5                  # Máximo 5 posiciones concurrentes (v4.9 FIX)
+  max_positions: 3                  # Máximo 3 posiciones concurrentes (Igual que backtest)
   allow_multiple_positions_same_symbol: true  # Permite múltiples por símbolo (v4.9 FIX)
   
   # Configuración de riesgo
   # Configuración de riesgo
-  risk_per_trade: 2.0               # ✅ CORREGIDO: 2% (era 5%)
+  risk_per_trade: 1.0               # ✅ CORREGIDO: 1% (Igual que backtest)
   max_account_drawdown: 0.25        # ✅ CORREGIDO: 25% max drawdown (era 0.80)
   max_position_size: 2.0            # ✅ CORREGIDO: 200% exposición máxima (era 5.0)
-  max_risk_per_trade_usd: 200.0     # ✅ CORREGIDO: Límite USD reducido (era $500)
+  max_risk_per_trade_usd: 300.0     # ✅ SINCRONIZADO: Igual que backtesting (era 200.0)
   max_position_crypto: 10.0         # Eliminar límite hardcode de crypto (10 unidades)
   
   # Configuración de sincronización
@@ -138,15 +162,64 @@ live_trading:
   enable_auto_close_tp_sl: true     # Habilitar cierre automático en TP/SL
   enable_trailing_stop: true        # Habilitar trailing stop dinámico
   trailing_stop_pct: 0.65           # Trailing stop al 0.65%
+  
+  # ========== CONFIGURACIÓN DE ESTRATEGIAS PARA LIVE TRADING ==========
+  strategy_mapping:
+    UltraDetailedHeikinAshiMLStrategy:
+      active: true                  # Activar estrategia para live trading
+      symbols:
+        - TM_VOLATILITY_100
+        - TM_VOLATILITY_75
+        - TM_VOLATILITY_50
+      timeframe: 15                 # 15 minutos (MT5 format)
+      risk_per_trade_usd: 300.00    # $300 USD por operación (sincronizado con risk_management)
+      
+      # Parámetros de riesgo (heredados de backtesting)
+      risk_per_trade: 1.0           # 1% riesgo por trade
+      max_drawdown: 0.25            # 25% máximo drawdown
+      max_concurrent_trades: 3      # Máximo 3 trades simultáneos
+      kelly_fraction: 0.25          # Cuarto-Kelly conservador
+      
+      # Parámetros de indicadores
+      indicators:
+        atr_period: 17
+        cci_threshold: 90
+        ema_trend_period: 50
+        rsi_period: 14
+        rsi_overbought: 70
+        rsi_oversold: 30
+        bollinger_period: 20
+        bollinger_std: 2
+        stoch_k_period: 14
+        stoch_d_period: 3
+        stoch_smooth_k: 3
+      
+      # Stop Loss y Take Profit
+      stop_loss_atr_multiplier: 2.5
+      take_profit_atr_multiplier: 3.75
+      min_rr_ratio: 2.0
+      
+      # Machine Learning thresholds
+      ml_thresholds:
+        ml_threshold: 0.52          # Umbral de confianza ML
+        ml_threshold_max: 0.85
+        ml_threshold_min: 0.52
+      
+      # Filtros adicionales
+      filters:
+        liquidity_score_min: 1      # Permitir índices sintéticos
+        volume_threshold: 0         # Sin filtro de volumen para Volatility
+        volume_ratio_min: 0.0
+        min_rr_ratio: 2.0           # Risk/Reward mínimo 1:2
 
 compensation_strategy:
   compensation_max_loss: 1.0
   emergency_stop_buffer: 0.8
-  enabled: false                    # 🔥 DESACTIVADO: Evitar martingala/compensación por ahora
+  enabled: true                     # ✅ ACTIVADO PARA TESTEAR FIX ADX
   loss_threshold: 0.5
   max_account_drawdown: 3.0
   risk_multiplier_high_dd: 0.7
-  size_multiplier: 1.0              # ✅ CORREGIDO: Reducido a 1.0 (sin multiplicador)
+  size_multiplier: 1.0
   tp_percent: 0.5
 
 data:

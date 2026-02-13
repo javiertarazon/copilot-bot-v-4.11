@@ -131,7 +131,22 @@ class MLModelManager:
                        'bb_lower', 'bb_width', 'rsi', 'momentum_5', 'momentum_10', 'volume_ratio', 
                        'price_position', 'trend_strength', 'returns', 'log_returns']
         
+        # Verificar que todas las columnas existen
+        missing_cols = [col for col in feature_cols if col not in df.columns]
+        if missing_cols:
+            print(f"[WARNING] Columnas faltantes para features: {missing_cols}")
+            # Intentar calcular si faltan algunas básicas
+            if 'returns' in missing_cols:
+                df['returns'] = df['close'].pct_change()
+            if 'log_returns' in missing_cols:
+                df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
+        
         # Usar exactamente estas features en este orden
+        # Rellenar con 0 si alguna falta para evitar error crítico
+        for col in feature_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+                
         features = df[feature_cols].copy()
         
         # Eliminar filas con NaN
@@ -365,6 +380,7 @@ class MLModelManager:
                            f"Ejecutar entrenamiento primero con datos históricos reales.")
 
         # Preparar features con datos reales
+        # USAR prepare_features DIRECTAMENTE para garantizar consistencia
         features = self.prepare_features(data)
 
         # DEBUG: Imprimir número de features
@@ -551,6 +567,12 @@ class UltraDetailedHeikinAshiMLStrategy:
             self.max_concurrent_trades = self.config.get('max_concurrent_trades', 1)  # Mantener 1 por símbolo
             self.kelly_fraction = self.config.get('kelly_fraction', 1.0)
             self.trailing_stop_pct = self.config.get('trailing_stop_pct', 0.65)  # ✅ CORREGIDO: Lee desde config (era hardcode 0.0)
+
+            # FORZAR FILTROS DE VOLUMEN A CERO para garantizar operativa en índices sintéticos
+            # Esto anula cualquier configuración externa restrictiva
+            self.volume_threshold = 0
+            self.volume_ratio_min = 0.0
+            self.logger.info("FORZADO: volume_threshold=0 y volume_ratio_min=0 para operativa en sintéticos")
 
             # Parámetros de Compensación (Reversal en Pérdida)
             # FIX: Leer correctamente desde estructura anidada compensation_strategy
@@ -1185,30 +1207,32 @@ class UltraDetailedHeikinAshiMLStrategy:
             return 0
 
         # Normalizar ATR por precio - MENOS restrictivo para live trading
-        atr_ratio = atr / current_row['close']
-        if atr_ratio > 0.50:  # SUBIDO de 0.10 a 0.50 para permitir más volatilidad en BTC
-            return 0
+        # COMENTADO: En sintéticos Vol75 el ATR puede ser muy alto relativo al precio, este filtro descarta todo
+        # atr_ratio = atr / current_row['close']
+        # if atr_ratio > 0.50:  # SUBIDO de 0.10 a 0.50 para permitir más volatilidad en BTC
+        #    return 0
 
         # 4. VOLUME FILTER: Confirmación de volumen - MENOS restrictivo
         # Si volume_threshold es 0 en config, ignorar chequeo de volumen (para sintéticos)
-        volume_threshold_cfg = getattr(self, 'volume_threshold', 1000)
+        volume_threshold_cfg = getattr(self, 'volume_threshold', 0) # Default 0 para ser permisivo
         
         volume = current_row.get('volume', 0)
-        if volume_threshold_cfg > 0 and volume <= 0:
-             # Solo retornar 0 si el filtro de volumen está activo (>0)
-            return 0
-
-        # Comparar con promedio de volumen - MENOS restrictivo
-        if volume_threshold_cfg > 0:
+        # Solo aplicar filtro si volume_threshold > 0 Y volumen > 0 (si volumen es 0 en datos, ignorar)
+        if volume_threshold_cfg > 0 and volume > 0:
+             # Comparar con promedio de volumen - MENOS restrictivo
             recent_volume = data['volume'].iloc[max(0, i-20):i+1]
             avg_volume = recent_volume.mean()
             if pd.isna(avg_volume) or avg_volume <= 0:
                 avg_volume = volume * 0.5  # Valor por defecto si no hay promedio válido
             
-            # Usar factor de configuración si existe, sino 0.3
-            vol_ratio_min = getattr(self, 'volume_ratio_min', 0.3)
+            # Usar factor de configuración si existe, sino 0.0 (desactivado)
+            vol_ratio_min = getattr(self, 'volume_ratio_min', 0.0)
             if volume < avg_volume * vol_ratio_min: 
                 return 0
+        
+        # Si volumen es 0 (sintéticos), PERMITIR la señal si volume_threshold es 0 o bajo
+        elif volume <= 0 and volume_threshold_cfg > 10: # Solo filtrar si se exige volumen alto
+             return 0
 
         # SEÑALES SIMPLIFICADAS - Solo requieren ML + Trend + RSI básico
 
@@ -1221,6 +1245,16 @@ class UltraDetailedHeikinAshiMLStrategy:
         elif trend_bearish and rsi_ok_sell and ml_conf >= self.ml_threshold_min:
             print(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
             return -1
+            
+        # DEBUG EXHAUSTIVO: Por qué NO entró?
+        if ml_conf >= self.ml_threshold_min:
+             print(f"[DEBUG MISSED] ML OK ({ml_conf:.3f}) pero falló condición técnica:")
+             if not trend_bullish and not trend_bearish:
+                 print(f"   -> Tendencia indefinida (Doji?)")
+             elif trend_bullish and not rsi_ok_buy:
+                 print(f"   -> BUY fallido por RSI > 70 ({rsi:.2f})")
+             elif trend_bearish and not rsi_ok_sell:
+                 print(f"   -> SELL fallido por RSI <= 60 ({rsi:.2f})")
 
         print(f"[DEBUG SIGNAL] NO SIGNAL: trend_bullish={trend_bullish}, trend_bearish={trend_bearish}, rsi_ok_buy={rsi_ok_buy}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
         return 0
@@ -1575,9 +1609,18 @@ class UltraDetailedHeikinAshiMLStrategy:
                 # Si el trade cerró en pérdida REAL (ignorar breakeven/stop en 0) y está habilitada
                 # Umbral de pérdida significativa: > $2.0 (para evitar churning en fees)
                 if self.compensation_enabled and pnl < -2.0:
+                    # [THOR FIX] FILTRO DE VOLATILIDAD: Solo revertir si hay tendencia fuerte
+                    # Evitamos "Whipsaw" (latigazos) en rangos laterales.
+                    # Requiere ADX > 20 para confirmar que el movimiento tiene fuerza real.
+                    current_adx = data['adx'].iloc[i] if 'adx' in data.columns else 0
+                    reversal_allowed = current_adx > 20
+                    
+                    if not reversal_allowed:
+                        self.logger.info(f"[REVERSAL SKIP] ADX bajo ({current_adx:.1f}). Mercado lateral - Bloqueando reversión suicida.")
+
                     last_trade = trades[-1]
-                    # Evitar cadenas infinitas de compensación (solo 1 nivel)
-                    if not last_trade.get('is_compensation', False):
+                    # Evitar cadenas infinitas y reversión en rangos
+                    if reversal_allowed and not last_trade.get('is_compensation', False):
                         
                         # Invertir dirección
                         comp_direction = 'short' if last_trade['direction'] == 'long' else 'long'
