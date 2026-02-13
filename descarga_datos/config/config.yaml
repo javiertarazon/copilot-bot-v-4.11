@@ -236,7 +236,15 @@ mt5:
   login: 174873                     # ⚠️ Se carga desde .env: MT5_LOGIN
   password: ''                      # ⚠️ Se carga desde .env: MT5_PASSWORD
   server: 'ThinkMarkets-Demo'       # Servidor ThinkMarkets Demo
+
+  # ===== CREDENCIALES BACKUP (Deriv Demo Legacy) =====
+  # login: 5899273
+  # password: 'Jatr280371$'         # (Nota: tiene un 1 extra vs password ThinkMarkets)
+  # server: 'Deriv-Demo'
+
   terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'  # Ruta MT5
+  # Ruta local de archivos (Hash del terminal) para comunicación Simple Bridge
+  mt5_files_path: 'C:\\Users\\javie\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Files'
   timeout: 30000
 
 exchanges:

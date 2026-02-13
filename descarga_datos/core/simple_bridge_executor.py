@@ -50,13 +50,19 @@ class SimpleBridgeExecutor:
         self.logger = setup_logger("SimpleBridgeExecutor")
         self.config = config or {}
         
-        # Directorios de comunicación (deben coincidir con MT5 Common Files)
+        # Directorios de comunicación (deben coincidir con MT5 Common Files o MQL5/Files local)
         mt5_common_path = Path(os.getenv('APPDATA')).parent / 'Roaming' / 'MetaQuotes' / 'Terminal' / 'Common' / 'Files'
         
-        self.command_dir = mt5_common_path / 'Bot_Commands'
-        self.response_dir = mt5_common_path / 'Bot_Responses'
-        self.ticks_dir = mt5_common_path / 'Bot_Ticks'
-        self.data_dir = mt5_common_path / 'Bot_Data'
+        # Permitir ruta personalizada (e.g. MQL5/Files específico del terminal)
+        custom_path = config.get('mt5_files_path')
+        if custom_path:
+            mt5_common_path = Path(custom_path)
+            self.logger.info(f"Usando ruta personalizada de archivos MT5: {mt5_common_path}")
+        
+        self.command_dir = mt5_common_path
+        self.response_dir = mt5_common_path
+        self.ticks_dir = mt5_common_path
+        self.data_dir = mt5_common_path
         
         # Crear directorios si no existen
         for dir_path in [self.command_dir, self.response_dir, self.ticks_dir, self.data_dir]:
@@ -492,9 +498,9 @@ class SimpleBridgeExecutor:
         """
         timeout = timeout or self.timeout
         
-        #--- Usar archivos únicos en lugar de UUID
-        command_file = self.command_dir / "ACTIVE_COMMAND.cmd"
-        response_file = self.response_dir / "ACTIVE_COMMAND.rsp"
+        #--- Usar archivos únicos simplificados
+        command_file = self.command_dir / "cmd.txt"
+        response_file = self.response_dir / "rsp.txt"
         
         try:
             # Limpiar archivos anteriores
@@ -507,7 +513,7 @@ class SimpleBridgeExecutor:
             time.sleep(0.05)
             
             # Escribir archivo de comando
-            with open(command_file, 'w') as f:
+            with open(command_file, 'w', encoding='utf-16') as f:
                 for key, value in command.items():
                     f.write(f"{key}={value}\n")
             

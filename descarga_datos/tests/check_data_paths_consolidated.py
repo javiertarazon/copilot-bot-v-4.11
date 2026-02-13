@@ -121,7 +121,8 @@ def check_data_integrity():
             file_count = len(list(subdir_path.glob('*')))
             print(f"✅ {subdir}: {file_count} elementos")
         else:
-            issues.append(f"⚠️  Subcarpeta {subdir} no encontrada (se creará cuando sea necesaria)")
+            # Subcarpetas opcionales que se crean al usar el sistema - no son errores
+            print(f"ℹ️  Subcarpeta {subdir} no encontrada (se creará cuando sea necesaria)")
     
     # Verificar base de datos
     db_path = data_dir / "data.db"

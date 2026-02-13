@@ -26,9 +26,9 @@ CPositionInfo  positionInfo;
 CSymbolInfo    symbolInfo;
 
 //--- Directorios de comunicación
-string CommandDir = "Bot_Commands\\";
-string ResponseDir = "Bot_Responses\\";
-string TicksDir = "Bot_Ticks\\";
+string CommandDir = "";
+string ResponseDir = "";
+string TicksDir = "";
 
 //--- Variables de estado
 bool isInitialized = false;
@@ -121,7 +121,7 @@ void OnTick()
 void CreateStateFiles()
 {
    //--- Crear archivo de heartbeat
-   int handle = FileOpen("Bot_Status.txt", FILE_WRITE|FILE_TXT|FILE_COMMON);
+   int handle = FileOpen("status.txt", FILE_WRITE|FILE_TXT);
    if(handle != INVALID_HANDLE)
    {
       FileWriteString(handle, "STATUS=READY\n");
@@ -138,10 +138,10 @@ void CreateStateFiles()
 void ProcessCommands()
 {
    //--- Archivo de comando activo (ÚNICO)
-   string commandFile = "Bot_Commands\\ACTIVE_COMMAND.cmd";
+   string commandFile = "cmd.txt";
    
    //--- Intentar abrir DIRECTAMENTE (sin FileIsExist que falla)
-   int handle = FileOpen(commandFile, FILE_READ|FILE_TXT|FILE_COMMON);
+   int handle = FileOpen(commandFile, FILE_READ|FILE_TXT);
    
    if(handle == INVALID_HANDLE)
    {
@@ -158,10 +158,10 @@ void ProcessCommands()
    FileClose(handle);
    
    //--- Procesar comando
-   ProcessCommandFile("ACTIVE_COMMAND.cmd");
+   ProcessCommandFile("cmd.txt");
    
    //--- Eliminar archivo procesado
-   bool deleted = FileDelete(commandFile, FILE_COMMON);
+   bool deleted = FileDelete(commandFile);
    
    if(InpDebugMode)
    {
@@ -181,7 +181,7 @@ void ProcessCommandFile(string filename)
       Print("🔍 Intentando abrir: Bot_Commands\\", filename);
    }
    
-   int handle = FileOpen("Bot_Commands\\" + filename, FILE_READ|FILE_TXT|FILE_COMMON);
+   int handle = FileOpen(filename, FILE_READ|FILE_TXT);
    if(handle == INVALID_HANDLE)
    {
       int error = GetLastError();
@@ -488,14 +488,14 @@ string ProcessSymbolInfo(string symbol)
 void SaveResponse(string commandFile, string response)
 {
    //--- Usar nombre fijo ACTIVE_COMMAND.rsp
-   string responseFile = "ACTIVE_COMMAND.rsp";
+   string responseFile = "rsp.txt";
    
    if(InpDebugMode)
    {
       Print("💾 Guardando respuesta: Bot_Responses\\", responseFile);
    }
    
-   int handle = FileOpen("Bot_Responses\\" + responseFile, FILE_WRITE|FILE_TXT|FILE_COMMON|FILE_UNICODE);
+   int handle = FileOpen(responseFile, FILE_WRITE|FILE_TXT|FILE_UNICODE);
    if(handle != INVALID_HANDLE)
    {
       FileWriteString(handle, response);
@@ -530,7 +530,7 @@ void SaveCurrentTick()
    if(!SymbolInfoTick(symbol, tick))
       return;
    
-   int handle = FileOpen("Bot_Ticks\\tick_" + symbol + ".txt", FILE_WRITE|FILE_TXT|FILE_COMMON);
+   int handle = FileOpen("tick_" + symbol + ".txt", FILE_WRITE|FILE_TXT);
    if(handle != INVALID_HANDLE)
    {
       FileWriteString(handle, "SYMBOL=" + symbol + "\n");
@@ -585,7 +585,7 @@ string ProcessHistoricalData(string symbol, int timeframe, int bars)
    
    //--- Guardar en archivo CSV para eficiencia
    string csvFile = "Bot_Data\\" + symbol + "_" + IntegerToString(timeframe) + "_bars.csv";
-   int handle = FileOpen(csvFile, FILE_WRITE|FILE_TXT|FILE_COMMON);
+   int handle = FileOpen(csvFile, FILE_WRITE|FILE_TXT);
    
    if(handle != INVALID_HANDLE)
    {
