@@ -45,30 +45,43 @@ backtesting:
 
   # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
-    TM_VOLATILITY_100:              # ✅ PARÁMETROS ESPECÍFICOS PARA VOLATILITY 100
-      risk_per_trade: 1.5           # 🔥 AJUSTADO: 1.5% (era 5.0%)
-      max_drawdown: 0.25            # 🔥 AJUSTADO: 25% (era 95%)
-      max_concurrent_trades: 1
-      kelly_fraction: 0.3           # 🔥 AJUSTADO: 0.3 (era 1.0)
-      stop_loss_atr_multiplier: 2.5 # 🔥 AJUSTADO: 2.5 (era 1.5)
+    TM_CRASH_300:                   # ✅ PARÁMETROS OPTIMIZADOS (Trial 13: PnL $18,931)
+      risk_per_trade: 1.5
+      ml_threshold_min: 0.38
+      ml_threshold: 0.56
+      stoch_overbought: 75
+      stoch_oversold: 30
+      cci_threshold: 210
+      rsi_overbought: 65
+      rsi_oversold: 15
+      sar_acceleration: 0.23
+      sar_maximum: 0.29
+      atr_period: 13
+      stop_loss_atr_multiplier: 2.0
       take_profit_atr_multiplier: 4.5
-      trailing_stop_atr_multiplier: 1.5
+      ema_trend_period: 15
+      max_drawdown: 0.16
+      max_portfolio_heat: 0.16
+      max_concurrent_trades: 10
+      kelly_fraction: 0.25
+      volume_ratio_min: 0.0          # Forzado para sintéticos
+      volume_threshold: 0
       
     TM_VOLATILITY_75:               # ✅ AGREGADO: Volatility 75
       risk_per_trade: 1.5
       ml_threshold_min: 0.44        # OPTIMIZADO: Trial 19 (Max Stability)
-      stop_loss_atr_multiplier: 2.5 # OPTIMIZADO
+      stop_loss_atr_multiplier: 2.5 
       take_profit_atr_multiplier: 5.5
       atr_period: 13
       ema_trend_period: 15
       
     TM_VOLATILITY_50:               # ✅ AGREGADO: Volatility 50
       risk_per_trade: 1.5
-      ml_threshold_min: 0.38        # 🔥 REBAJADO: de 0.42 a 0.38 para despertar trading
-      stop_loss_atr_multiplier: 3.5
-      take_profit_atr_multiplier: 6.25
-      atr_period: 15
-      ema_trend_period: 105
+      ml_threshold_min: 0.35        # 🔥 REBAJADO MÁXIMO para despertar trading
+      stop_loss_atr_multiplier: 3.0
+      take_profit_atr_multiplier: 5.0
+      atr_period: 14
+      ema_trend_period: 50
       
   # EURUSD tiene volumen normal en Forex
   volume_ratio_min: 0.1
@@ -96,7 +109,7 @@ backtesting:
     EURUSD: true                     # ✅ EURUSD (Forex MT5)
   
   symbols:
-    - TM_VOLATILITY_100
+    - TM_CRASH_300
     - TM_VOLATILITY_75
     - TM_VOLATILITY_50
   timeframe: 15m                     # Timeframe 15m (Solicitado)

@@ -32,9 +32,7 @@ from strategies.ultra_detailed_heikin_ashi_ml_strategy import UltraDetailedHeiki
 from typing import Dict, List, Tuple
 
 from config.config_loader import load_config_from_yaml
-# from core.downloader import AdvancedDataDownloader, download_and_cache_data  # Removido por compatibilidad Python 3.13
-from core.downloader import AdvancedDataDownloader, download_and_cache_data
-# from indicators.technical_indicators import TechnicalIndicators  # Removido por compatibilidad Python 3.13
+from core.downloader import AdvancedDataDownloader
 from indicators.technical_indicators import TechnicalIndicators
 from utils.logger import setup_logger
 
@@ -52,16 +50,6 @@ class StrategyOptimizer:
                  optimization_targets=None):
         """
         Inicializa el optimizador de estrategia.
-        
-        Args:
-            symbol (str): Símbolo a optimizar
-            timeframe (str): Timeframe a usar
-            start_date (str): Fecha inicial para datos
-            end_date (str): Fecha final para datos
-            n_trials (int): Número de pruebas Optuna
-            study_name (str): Nombre del estudio
-            config: Configuración del sistema
-            optimization_targets (dict): Objetivos de optimización personalizados
         """
         self.symbol = symbol
         self.timeframe = timeframe
@@ -92,81 +80,80 @@ class StrategyOptimizer:
         logger.info(f"Targets de optimización: {self.optimization_targets}")
         
     def download_data(self):
-        """Carga los datos históricos para optimización desde SQLite o CSV"""
-        logger.info(f"Cargando datos para {self.symbol} desde {self.start_date} hasta {self.end_date}")
+        """Carga los datos históricos para optimización desde SQLite directamente (bypass DataStorage)"""
+        logger.info(f"Cargando datos para {self.symbol}...")
 
         try:
-            # OPCIÓN 1: Intentar cargar desde SQLite primero
-            logger.info("🔍 Intentando cargar desde SQLite...")
-            from utils.storage import DataStorage
+            # Ruta a la base de datos
+            db_path = Path(__file__).parent.parent / "data" / "data.db"
+            logger.info(f"DB Path: {db_path} (Exists: {db_path.exists()})")
             
-            storage = DataStorage()
+            if not db_path.exists():
+                raise FileNotFoundError(f"DB no encontrada en {db_path}")
+
+            # Construir nombre de tabla
             table_name = f"{self.symbol.replace('/', '_')}_{self.timeframe}"
+            logger.info(f"Buscando tabla: {table_name}")
             
-            # Convertir fechas a timestamps
-            start_ts = int(pd.Timestamp(self.start_date).timestamp())
-            end_ts = int(pd.Timestamp(self.end_date).timestamp())
+            # Cargar directamente con sqlite3 + pandas
+            import sqlite3
+            with sqlite3.connect(str(db_path)) as conn:
+                # Verificar si existe tabla
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+                if not cursor.fetchone():
+                    logger.error(f"Tabla {table_name} no existe en {db_path}")
+                    # Listar tablas disponibles para debug
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tablas disponibles: {tables}")
+                    raise ValueError(f"Tabla {table_name} no encontrada")
+                
+                # Cargar datos
+                query = f"SELECT * FROM {table_name}"
+                logger.info(f"Ejecutando query: {query}")
+                df = pd.read_sql_query(query, conn)
             
-            # Cargar datos desde SQLite
-            df = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+            if df is None or df.empty:
+                logger.warning(f"Tabla {table_name} vacía")
+                raise ValueError("Tabla vacía")
+                
+            logger.info(f'✅ Datos SQLite cargados: {len(df)} registros')
             
-            if df is not None and not df.empty:
-                logger.info(f'✅ Datos SQLite cargados: {len(df)} registros')
-                self.data = df
-                logger.info(f"Datos cargados exitosamente desde SQLite: {len(self.data)} registros")
-                return self.data
-            
-            # OPCIÓN 2: Si no hay datos en SQLite, intentar CSV
-            logger.info("⚠️ SQLite vacío, intentando CSV...")
-            symbol_clean = self.symbol.replace('/', '_')
-            filename = f"{symbol_clean}_{self.timeframe}.csv"
-            csv_path = Path(__file__).parent.parent / 'data' / 'csv' / filename
-
-            if not csv_path.exists():
-                raise FileNotFoundError(f'Archivo CSV no encontrado: {csv_path}')
-
-            # Cargar datos del CSV
-            df = pd.read_csv(csv_path)
-            logger.info(f'Datos locales cargados desde {csv_path}: {len(df)} registros')
-
-            # Convertir timestamp si existe
+            # Manejar timestamps corruptos (todos 1)
+            # Si el std dev de timestamp es 0, son todos iguales -> corruptos
+            timestamp_ok = False
             if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                df = df.set_index('timestamp')
-                # Filtrar por período
-                mask = (df.index >= self.start_date) & (df.index <= self.end_date)
-                df = df[mask]
-                logger.info(f'Datos filtrados por período: {len(df)} registros')
+                if df['timestamp'].nunique() <= 1:
+                     logger.warning("⚠️ Timestamps corruptos detectados (todos iguales/vacíos). Generando índice sintético.")
+                     timestamp_ok = False
+                else:
+                     timestamp_ok = True
+            
+            if not timestamp_ok:
+                # Generar índice sintético basado en start_date
+                start_dt = pd.Timestamp(self.start_date)
+                # Parse timeframe interval
+                freq_map = {'15m': '15min', '1h': '1h', '4h': '4h', '1d': '1D'}
+                freq = freq_map.get(self.timeframe, '15min') # Default 15min
+                
+                logger.info(f"Generando timestamps sintéticos desde {start_dt} con freq={freq}")
+                df.index = pd.date_range(start=start_dt, periods=len(df), freq=freq)
+                df['timestamp'] = df.index
+            else:
+                # Convertir timestamp normal
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+                df = df.set_index('timestamp').sort_index()
 
             self.data = df
-
-            if self.data is None or len(self.data) == 0:
-                raise ValueError(f"No se pudieron cargar datos para {self.symbol}")
-
-            logger.info(f"Datos cargados exitosamente: {len(self.data)} registros")
+            logger.info(f"Datos finalizados: {len(self.data)} registros")
+            return self.data
 
         except Exception as e:
-            logger.error(f"Error cargando datos para {self.symbol}: {e}")
-            # Si no se pudieron cargar datos, intentar descargar
-            logger.info("📥 Intentando descargar datos desde exchange...")
-            try:
-                # Instanciar correctamente con config
-                downloader = AdvancedDataDownloader(self.config)
-                self.data = download_and_cache_data(
-                    symbol=self.symbol,
-                    timeframe=self.timeframe,
-                    start_date=self.start_date,
-                    end_date=self.end_date
-                )
-                if self.data is None or len(self.data) == 0:
-                    raise ValueError(f"No se pudieron descargar datos para {self.symbol}")
-                logger.info(f"✅ Datos descargados: {len(self.data)} registros")
-            except Exception as download_error:
-                logger.error(f"Error descargando datos: {download_error}")
-                raise ValueError(f"No se pudieron obtener datos para {self.symbol} ni desde almacenamiento ni desde exchange") from e
-            
-        logger.info(f"Descargados {len(self.data)} registros")
-        return self.data
+            logger.error(f"Error CRÍTICO cargando datos: {e}")
+            import traceback
+            traceback.print_exc()
+            raise ValueError(f"Fallo carga de datos: {e}")
     
     def prepare_indicators(self):
         """Prepara los indicadores técnicos utilizando la clase TechnicalIndicators centralizada"""
@@ -182,11 +169,23 @@ class StrategyOptimizer:
         indicators = TechnicalIndicators()
         df = indicators.calculate_all_indicators_unified(self.data)
         
-        # Limpiar NaN
-        df = df.dropna()
-
+        # Debug: Verificar NaNs
+        nan_counts = df.isna().sum()
+        cols_with_nans = nan_counts[nan_counts > 0]
+        if not cols_with_nans.empty:
+            logger.warning(f"Columnas con NaN antes de limpieza: {cols_with_nans.to_dict()}")
+            # Si alguna columna tiene TODOS NaN, la eliminamos para no perder todas las filas
+            all_nan_cols = nan_counts[nan_counts == len(df)].index
+            if len(all_nan_cols) > 0:
+                logger.warning(f"🗑️ Eliminando columnas FULL NaN: {list(all_nan_cols)}")
+                df = df.drop(columns=all_nan_cols)
+        
+        # Limpiar NaN de forma segura
+        # Primero forward fill, luego backward fill (para el inicio), luego 0
+        df = df.ffill().bfill().fillna(0)
+        
         self.data = df
-        logger.info(f"✅ Indicadores calculados (centralizado): {len(df)} filas válidas")
+        logger.info(f"✅ Indicadores calculados: {len(df)} filas válidas")
 
         return self.data
     
@@ -199,38 +198,41 @@ class StrategyOptimizer:
         """
         # Definir espacio de parámetros CRYPTO-OPTIMIZED
         params = {
-            # Parámetros ML - ULTRA PERMISIVO para crypto volatilidad
-            # FIX: Optimizar ml_threshold_min que es el que usa la estrategia realmente
-            "ml_threshold_min": trial.suggest_float("ml_threshold_min", 0.40, 0.60, step=0.02),
+            # Parámetros ML - Optimización para Crash/Volatilidad
+            # Rango ajustado para Crash 300: 0.35 - 0.55
+            "ml_threshold_min": trial.suggest_float("ml_threshold_min", 0.35, 0.55, step=0.01),
             "ml_threshold": trial.suggest_float("ml_threshold", 0.40, 0.60, step=0.02),
             
-            # Parámetros de indicadores - CRYPTO FLEXIBLES
-            "stoch_overbought": trial.suggest_int("stoch_overbought", 60, 85, step=5),  # 🔥 Más bajo para crypto
-            "stoch_oversold": trial.suggest_int("stoch_oversold", 15, 40, step=5),  # 🔥 Más alto para crypto
-            "cci_threshold": trial.suggest_int("cci_threshold", 50, 250, step=10),  # 🔥 Más amplitud
-            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.2, 1.0, step=0.1),  # 🔥 Mínimo más bajo
+            # Parámetros de indicadores - Rango amplio para encontrar sweet spot
+            "stoch_overbought": trial.suggest_int("stoch_overbought", 60, 90, step=5),
+            "stoch_oversold": trial.suggest_int("stoch_oversold", 10, 40, step=5),
+            "cci_threshold": trial.suggest_int("cci_threshold", 50, 250, step=10),
+            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.0, 1.0, step=0.1), # Permitir 0.0 para ignorar
             
-            # Parámetros SAR - CRYPTO ALTA SENSIBILIDAD
-            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.02, 0.30, step=0.01),  # 🔥 Hasta 0.30
-            "sar_maximum": trial.suggest_float("sar_maximum", 0.10, 0.35, step=0.01),  # 🔥 Rango amplio
+            # Parámetros RSI (Críticos para Crash)
+            "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 85, step=5),
+            "rsi_oversold": trial.suggest_int("rsi_oversold", 15, 45, step=5),
+
+            # Parámetros SAR
+            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.02, 0.30, step=0.01),
+            "sar_maximum": trial.suggest_float("sar_maximum", 0.10, 0.35, step=0.01),
             
-            # Parámetros ATR - CRYPTO AGRESIVO (volatilidad alta)
-            "atr_period": trial.suggest_int("atr_period", 7, 21, step=1),  # 🔥 Rango medio
-            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 1.5, 4.5, step=0.25),  # 🔥 Stops amplios
-            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.0, 7.0, step=0.25),  # 🔥 Targets altos
+            # Parámetros ATR
+            "atr_period": trial.suggest_int("atr_period", 7, 21, step=1),
+            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 1.5, 5.0, step=0.25),
+            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.0, 8.0, step=0.25),
             
-            # Parámetros EMA - CRYPTO TRENDS RÁPIDOS
-            "ema_trend_period": trial.suggest_int("ema_trend_period", 15, 120, step=5),  # 🔥 Trends más cortos
+            # Parámetros EMA
+            "ema_trend_period": trial.suggest_int("ema_trend_period", 15, 120, step=5),
             
-            # Filtros de Volumen - DESACTIVADO para sintéticos
+            # Filtros de Volumen
             "volume_threshold": trial.suggest_categorical("volume_threshold", [0]), 
             
-            # Parámetros de gestión de riesgo - CRYPTO ULTRA AGRESIVO
-            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.15, step=0.01),  # 🔥 Hasta 15% DD
-            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.08, 0.20, step=0.01),  # 🔥 Hasta 20% heat
-            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 3, 10),  # 🔥 Hasta 10 trades simultáneos
-            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.25, 0.80, step=0.05),  # 🔥 Kelly agresivo
-            # "trailing_stop_pct": FIJADO EN 70% EN LA ESTRATEGIA - NO OPTIMIZABLE
+            # Parámetros de gestión de riesgo
+            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.20, step=0.01),
+            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.08, 0.25, step=0.01),
+            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 3, 15),
+            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.25, 0.80, step=0.05),
         }
         
         # Crear instancia de la estrategia con los parámetros a optimizar
@@ -240,7 +242,12 @@ class StrategyOptimizer:
         strategy._optimization_mode = True
 
         # Ejecutar la estrategia
+        # IMPORTANTE: Asegurar que se usen los datos cargados previamente
+        if self.data is None:  # Safety check
+             self.download_data()
+        
         results = strategy.run(self.data, self.symbol, self.timeframe)
+
         
         # Obtener constraints de configuración
         constraints = self.optimization_targets.get('constraints', {})
@@ -455,6 +462,9 @@ def main():
     parser.add_argument("--start", type=str, default="2022-01-01", help="Fecha inicial")
     parser.add_argument("--end", type=str, default="2022-12-31", help="Fecha final")
     parser.add_argument("--trials", type=int, default=50, help="Número de pruebas")
+    
+    import sys
+    print("INICIANDO OPTIMIZACION...", flush=True)
     
     args = parser.parse_args()
     
