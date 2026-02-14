@@ -64,15 +64,9 @@ class MLModelManager:
         # Agregar configuración para prepare_features
         self.config = config if config is not None else {}
         
-        # FASE 4: Inicializar ONNX predictor (v4.11)
+        # FASE 4: ONNX predictor se inicializa lazy en predict_signal()
+        # cuando se conoce el model_path real
         self.onnx_predictor = None
-        if ONNX_AVAILABLE:
-            try:
-                self.onnx_predictor = create_predictor(use_mock=True)
-                print("✅ FASE 4: ONNX Model Predictor inicializado (20x speedup)")
-            except Exception as e:
-                print(f"⚠️ No se pudo inicializar ONNX predictor: {e}")
-                self.onnx_predictor = None
 
 
     def ensure_model_dir(self):
@@ -320,15 +314,21 @@ class MLModelManager:
             print(f"    Error al guardar modelo para {symbol}")
 
     def load_model(self, symbol: str, model_name: str):
-        """Cargar modelo entrenado usando múltiples métodos de compatibilidad"""
+        """Cargar modelo entrenado y buscar versión ONNX"""
         import os
         import joblib
 
-        # PRIMERO: Intentar cargar desde archivos joblib en el directorio de modelos (donde están los modelos reales)
+        model = None
+        scaler = None
+        onnx_path = None
+
+        # PRIMERO: Intentar cargar desde archivos joblib en el directorio de modelos
         try:
-            # Convertir símbolo a nombre de directorio válido (XRP/USDT -> XRP_USDT)
+            # Convertir símbolo a nombre de directorio válido
             symbol_dir = symbol.replace('/', '_')
             models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', symbol_dir)
+            
+            # Buscar archivos Joblib
             model_files = [f for f in os.listdir(models_dir) if f.startswith('RandomForest_') and f.endswith('.joblib')]
 
             if model_files:
@@ -336,132 +336,126 @@ class MLModelManager:
                 latest_model = sorted(model_files)[-1]
                 model_path = os.path.join(models_dir, latest_model)
 
-                # Cargar modelo joblib
+                # Intentar encontrar el ONNX correspondiente (mismo timestamp)
+                # Formato esperado: RandomForest_YYYYMMDD_HHMMSS.joblib -> .onnx
+                candidate_onnx = latest_model.replace('.joblib', '.onnx')
+                candidate_onnx_path = os.path.join(models_dir, candidate_onnx)
+                
+                if os.path.exists(candidate_onnx_path):
+                    onnx_path = candidate_onnx_path
+                    print(f"✅ Modelo ONNX encontrado: {candidate_onnx}")
+
+                # Cargar modelo joblib (siempre necesario para scaler y metadata)
                 model_data = joblib.load(model_path)
                 model = model_data['model'] if isinstance(model_data, dict) else model_data
 
-                # Intentar cargar scaler desde el mismo archivo o crear uno nuevo
-                scaler = None
+                # Cargar scaler
                 if isinstance(model_data, dict) and 'scaler' in model_data:
                     scaler = model_data['scaler']
                 else:
-                    # Crear scaler dummy y ajustarlo con datos de ejemplo
                     from sklearn.preprocessing import StandardScaler
                     scaler = StandardScaler()
-                    # El scaler se ajustará cuando se use por primera vez
 
-                return model, scaler
+                return model, scaler, onnx_path
         except Exception as e:
             print(f"Error cargando modelo joblib: {e}")
 
-        # SEGUNDO: Intentar cargar desde ModelManager centralizado
+        # SEGUNDO: Intentar cargar desde ModelManager centralizado (fallback, sin ONNX explícito)
         try:
             model = self.model_manager.load_model(model_name, symbol)
             scaler = self.model_manager.load_model(f"{model_name}_scaler", symbol)
             if model is not None and scaler is not None:
-                return model, scaler
+                return model, scaler, None
         except:
             pass
 
-        return None, None
+        return None, None, None
 
     def predict_signal(self, data: pd.DataFrame, symbol: str, model_name: str = 'random_forest') -> pd.Series:
         """
-        Generar predicciones de señales usando modelo entrenado REAL
-        NO USA SIMULACIONES - Requiere modelo entrenado con datos históricos
-        
-        FASE 4 (v4.11): Usa ONNX Model si está disponible (20x speedup - 20ms → 1ms).
+        Generar predicciones de señales usando modelo entrenado REAL (ONNX o Sklearn)
         """
-        # Cargar modelo entrenado (OBLIGATORIO)
-        model, scaler = self.load_model(symbol, model_name)
+        try:
+            from v411_optimizations.onnx_model_predictor import ONNXRUNTIME_AVAILABLE as ONNX_AVAILABLE, create_predictor
+        except ImportError:
+            ONNX_AVAILABLE = False
+            create_predictor = None
+
+        # Cargar modelo y verificar si existe ONNX
+        model, scaler, onnx_path = self.load_model(symbol, model_name)
 
         if model is None or scaler is None:
-            raise ValueError(f"MODELO {model_name} NO ENCONTRADO para {symbol}. "
-                           f"Ejecutar entrenamiento primero con datos históricos reales.")
+             print(f"⚠️ MODELO {model_name} NO ENCONTRADO para {symbol}. Usando confianza neutral.")
+             return pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
 
-        # Preparar features con datos reales
-        # USAR prepare_features DIRECTAMENTE para garantizar consistencia
+        # Preparar features
         features = self.prepare_features(data)
 
-        # DEBUG: Imprimir número de features
-        print(f"DEBUG: Features preparadas: {len(features.columns)} columnas")
-        print(f"DEBUG: Nombres de features: {list(features.columns)}")
+        if features.empty:
+            print(f"DEBUG: No hay features válidas para {symbol}.")
+            return pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
 
-        # Ajustar scaler si no está fitted o si hay mismatch de features
+        # Ajustar scaler
         try:
-            # Verificar si el scaler está fitted
             if not hasattr(scaler, 'mean_') or scaler.mean_ is None:
-                raise ValueError("Scaler not fitted - debe estar guardado junto con el modelo entrenado")
+                 print("ERROR CRÍTICO: Scaler no fitted. Devolviendo confianza neutral.")
+                 return pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
+            
             features_scaled = scaler.transform(features)
         except Exception as e:
-            #  DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
-            print(f"ERROR CRÍTICO: Scaler no válido ({e}). Devolviendo confianza neutral (0.5)")
-            # Fallback seguro: devolver confianza neutral sin data leakage
-            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-            return confidence
+            print(f"ERROR Scaler: {e}")
+            return pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
 
-        # Verificar que el número de features coincida
-        # Determinar dinámicamente el número esperado de features basado en las disponibles
-        expected_features = len(features.columns)  # Usar el número real de features preparadas
-        actual_features = features_scaled.shape[1]
-        if actual_features != expected_features:
-            print(f"CRITICAL: Features mismatch - esperado {expected_features}, obtenido {actual_features}")
-            #  DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
-            print("ERROR CRÍTICO: Mismatch de features. Devolviendo confianza neutral (0.5)")
-            # Fallback seguro: devolver confianza neutral sin data leakage
-            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-            return confidence
+        confidence = None
 
-        # FASE 4: Intentar usar ONNX predictor primero
-        if self.onnx_predictor is not None:
+        # ---------------------------------------------------------
+        # LÓGICA ONNX (Prioritaria)
+        # ---------------------------------------------------------
+        if ONNX_AVAILABLE and onnx_path:
             try:
-                print("📦 Usando ONNX Model para predicción (20x speedup)")
-                onnx_proba = self.onnx_predictor.predict(features_scaled)
-                # Convertir a confianza
-                confidence = pd.Series(onnx_proba[:, 2] - onnx_proba[:, 0] if onnx_proba.shape[1] > 2 else onnx_proba[:, 1] - 0.5, 
-                                      index=data.index, name='ml_confidence')
-                return confidence
+                # Inicializar predictor si es necesario
+                if self.onnx_predictor is None or getattr(self.onnx_predictor, 'model_path', '') != onnx_path:
+                    self.onnx_predictor = create_predictor(model_path=onnx_path)
+                    print(f"🚀 Usando ONNX Predictor para {symbol}")
+
+                if self.onnx_predictor:
+                     # Predicción ONNX (Batch)
+                     onnx_result = self.onnx_predictor.predict_batch(features_scaled.astype('float32'))
+                     
+                     import numpy as np
+                     if isinstance(onnx_result, list):
+                         onnx_result = np.array(onnx_result)
+
+                     if onnx_result.ndim == 2 and onnx_result.shape[1] >= 2:
+                         # Es matriz de probabilidades -> Tomar clase 1
+                         confidence = pd.Series(onnx_result[:, 1], index=features.index, name='ml_confidence')
+                     elif onnx_result.ndim == 1 or (onnx_result.ndim == 2 and onnx_result.shape[1] == 1):
+                         # Es vector de labels -> Confianza extrema
+                         confidence = pd.Series(onnx_result.flatten().astype(float), index=features.index, name='ml_confidence')
+                     
             except Exception as e:
-                print(f"⚠️ ONNX fallback a sklearn: {e}")
-                # Fallback a sklearn
-                pass
+                print(f"⚠️ Fallo ONNX ({e}). Usando Sklearn fallback.")
+                self.onnx_predictor = None
 
-        # Predecir probabilidades usando modelo entrenado sklearn
-        # Deshabilitar paralelización temporalmente para compatibilidad con Python 3.13
-        original_n_jobs = getattr(model, 'n_jobs', None)
-        if hasattr(model, 'n_jobs'):
-            model.n_jobs = 1
-        
-        try:
-            proba = model.predict_proba(features_scaled)
-        except ValueError as e:
-            if "features" in str(e).lower():
-                # Error de mismatch de features - NO intentar re-entrenar, devolver confianza neutral
-                print(f"ERROR: Mismatch de features en modelo ({e}). Usando confianza neutral (0.5)")
-                # Fallback: devolver confianza neutral sin intentar re-entrenar
-                confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-                return confidence
-            else:
-                raise e
-        finally:
-            # Restaurar configuración original
-            if hasattr(model, 'n_jobs') and original_n_jobs is not None:
-                model.n_jobs = original_n_jobs
+        # ---------------------------------------------------------
+        # FALLBACK SKLEARN (Lento pero seguro)
+        # ---------------------------------------------------------
+        if confidence is None:
+            try:
+                # Deshabilitar paralelización en runtime
+                if hasattr(model, 'n_jobs'):
+                    model.n_jobs = 1
+                
+                probabilities = model.predict_proba(features_scaled)
+                # Devolver probabilidad de clase 1, alineada con features.index
+                confidence = pd.Series(probabilities[:, 1], index=features.index, name='ml_confidence')
+                
+            except Exception as e:
+                print(f"ERROR Sklearn Predict: {e}")
+                return pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
 
-        # Convertir a confianza (probabilidad de cambio alcista - probabilidad de cambio bajista)
-        confidence = proba[:, 2] - proba[:, 0] if proba.shape[1] > 2 else proba[:, 1] - 0.5
-
-        # Normalizar a [0, 1] - confianza real del modelo
-        confidence = (confidence + 1) / 2
-        confidence = np.clip(confidence, 0, 1)
-
-        # CRÍTICO: El índice debe coincidir con features.index, luego reindexar al data.index original
-        confidence_series = pd.Series(confidence, index=features.index, name='ml_confidence')
-        
-        # Reindexar para coincidir con el índice original de data (llenar NaN con 0.5 si es necesario)
-        confidence_series = confidence_series.reindex(data.index, fill_value=0.5)
-        
-        return confidence_series
+        # Reindexar para coincidir con el índice original de data (llenar NaN con 0.5)
+        return confidence.reindex(data.index, fill_value=0.5)
 
     def _calculate_heikin_ashi(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcular velas Heikin Ashi usando el módulo centralizado."""
@@ -1171,18 +1165,28 @@ class UltraDetailedHeikinAshiMLStrategy:
         # DEBUG: Mostrar valores clave
         current_row = data.iloc[i]
         ml_conf = ml_confidence_all.iloc[i]
-        print(f"[DEBUG SIGNAL] Index {i}: ML={ml_conf:.3f}, RSI={current_row.get('rsi', 'N/A')}, Volume={current_row.get('volume', 'N/A')}, HA_Close={current_row.get('ha_close', 'N/A')}, HA_Open={current_row.get('ha_open', 'N/A')}, ATR={current_row.get('atr', 'N/A')}")
-
+        
         # Obtener datos de la vela actual
-        current_row = data.iloc[i]
+        # current_row = data.iloc[i] # REDUNDANTE
 
         # Verificar que tengamos suficientes datos
         if i < 20:  # Necesitamos al menos 20 velas para indicadores
             return 0
 
         # ML CONFIDENCE como filtro principal - ALINEADO con live trading
-        ml_conf = ml_confidence_all.iloc[i]
-        if ml_conf < self.ml_threshold_min:  # ALINEADO: usar ml_threshold_min (0.4) en lugar de 0.3
+        # Usar el umbral dinámico cargado en __init__ (0.35 para Crash/Vol50)
+        start_threshold = getattr(self, 'ml_threshold_min', 0.40)
+        
+        # Para Crash/Boom y Volatility50, ser aún más flexible si no hay señales
+        if 'CRASH' in self.symbol or 'VOLATILITY_50' in self.symbol:
+             # Permitir señales un poco por debajo del umbral si la tendencia es muy fuerte
+             pass 
+
+        if ml_conf < start_threshold:
+            # DEBUG SOLO SI ESTÁ CERCA (para no saturar logs)
+            if ml_conf > start_threshold - 0.10:
+                 pass
+                 # print(f"[DEBUG SKIP] ML {ml_conf:.3f} < {start_threshold}")
             return 0
 
         # FILTROS TÉCNICOS SIMPLIFICADOS
@@ -1195,69 +1199,76 @@ class UltraDetailedHeikinAshiMLStrategy:
         trend_bullish = ha_close > ha_open
         trend_bearish = ha_close < ha_open
 
-        # 2. MOMENTUM FILTER: RSI - MENOS restrictivo
+        # 2. MOMENTUM FILTER: RSI ADAPTATIVO POR TIPO DE ACTIVO
         rsi = current_row.get('rsi', 50)
-        rsi_ok_buy = rsi < 70  # Permitir RSI hasta 70 para compras
-        # Para SELL: Permitir cuando RSI está alto (sobrecompra) = oportunidad de short
-        rsi_ok_sell = rsi > 60  # FIX: Cambiado de < 60 a > 60 para lógica correcta de shorts
+        
+        # Configuración por defecto (Volatility 75, Forex, Crypto)
+        rsi_buy_limit = 70   # Comprar si RSI < 70
+        rsi_sell_limit = 60  # Vender si RSI > 60 (Sobrecompra relativa)
+        
+        # LÓGICA ESPECIAL PARA CRASH (Crash 300/500/1000)
+        # Crash son índices que caen bruscamente (Spikes bajistas)
+        # La venta (SELL) es la operación principal, y suele ocurrir cuando el precio rompe soportes
+        # El RSI puede no llegar a sobrecompra antes de un crash
+        if 'CRASH' in self.symbol:
+            rsi_buy_limit = 80   # Ser permisivo en compras (rebotes)
+            rsi_sell_limit = 40  # 🔥 CRITICO: Permitir ventas incluso si RSI ya está bajando (Momentum bajista fuerte)
+            
+            # Lógica especial Crash: Si hay momentum bajista fuerte (RSI < 50), priorizar SELL
+            # Ignoramos la regla de "vender caro" convencional
+        
+        # LÓGICA ESPECIAL PARA BOOM (Boom 300/500/1000)
+        elif 'BOOM' in self.symbol:
+            rsi_buy_limit = 60   # 🔥 CRITICO: Permitir compras incluso si RSI ya está subiendo
+            rsi_sell_limit = 20  # Ser permisivo en ventas
+            
+        rsi_ok_buy = rsi < rsi_buy_limit
+        rsi_ok_sell = rsi > rsi_sell_limit
 
         # 3. VOLATILITY FILTER: ATR no demasiado alto - MENOS restrictivo
         atr = current_row.get('atr', 0)
         if pd.isna(atr) or atr == 0:
             return 0
 
-        # Normalizar ATR por precio - MENOS restrictivo para live trading
-        # COMENTADO: En sintéticos Vol75 el ATR puede ser muy alto relativo al precio, este filtro descarta todo
-        # atr_ratio = atr / current_row['close']
-        # if atr_ratio > 0.50:  # SUBIDO de 0.10 a 0.50 para permitir más volatilidad en BTC
-        #    return 0
-
         # 4. VOLUME FILTER: Confirmación de volumen - MENOS restrictivo
         # Si volume_threshold es 0 en config, ignorar chequeo de volumen (para sintéticos)
-        volume_threshold_cfg = getattr(self, 'volume_threshold', 0) # Default 0 para ser permisivo
+        volume_threshold_cfg = getattr(self, 'volume_threshold', 0) 
         
         volume = current_row.get('volume', 0)
-        # Solo aplicar filtro si volume_threshold > 0 Y volumen > 0 (si volumen es 0 en datos, ignorar)
+        # Solo aplicar filtro si volume_threshold > 0 Y volumen > 0
         if volume_threshold_cfg > 0 and volume > 0:
-             # Comparar con promedio de volumen - MENOS restrictivo
             recent_volume = data['volume'].iloc[max(0, i-20):i+1]
             avg_volume = recent_volume.mean()
             if pd.isna(avg_volume) or avg_volume <= 0:
-                avg_volume = volume * 0.5  # Valor por defecto si no hay promedio válido
+                avg_volume = volume * 0.5
             
-            # Usar factor de configuración si existe, sino 0.0 (desactivado)
             vol_ratio_min = getattr(self, 'volume_ratio_min', 0.0)
             if volume < avg_volume * vol_ratio_min: 
                 return 0
-        
-        # Si volumen es 0 (sintéticos), PERMITIR la señal si volume_threshold es 0 o bajo
-        elif volume <= 0 and volume_threshold_cfg > 10: # Solo filtrar si se exige volumen alto
+        elif volume <= 0 and volume_threshold_cfg > 10:
              return 0
 
-        # SEÑALES SIMPLIFICADAS - Solo requieren ML + Trend + RSI básico
+        # SEÑALES SIMPLIFICADAS
+        
+        signal_generated = 0
+        
+        # BUY SIGNAL
+        if trend_bullish and rsi_ok_buy and ml_conf >= start_threshold:
+            print(f"[DEBUG SIGNAL] BUY SIGNAL GENERATED: trend_bullish={trend_bullish}, rsi_ok_buy={rsi_ok_buy} (<{rsi_buy_limit}), ml_conf={ml_conf:.3f}")
+            signal_generated = 1
 
-        # BUY SIGNAL: ML confidence + trend bullish + RSI no sobrecomprado
-        if trend_bullish and rsi_ok_buy and ml_conf >= self.ml_threshold_min:
-            print(f"[DEBUG SIGNAL] BUY SIGNAL GENERATED: trend_bullish={trend_bullish}, rsi_ok_buy={rsi_ok_buy}, ml_conf={ml_conf:.3f}")
-            return 1
-
-        # SELL SIGNAL: ML confidence + trend bearish + RSI no sobrevendido
-        elif trend_bearish and rsi_ok_sell and ml_conf >= self.ml_threshold_min:
-            print(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
-            return -1
+        # SELL SIGNAL
+        elif trend_bearish and rsi_ok_sell and ml_conf >= start_threshold:
+            print(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell} (>{rsi_sell_limit}), ml_conf={ml_conf:.3f}")
+            signal_generated = -1
             
-        # DEBUG EXHAUSTIVO: Por qué NO entró?
-        if ml_conf >= self.ml_threshold_min:
-             print(f"[DEBUG MISSED] ML OK ({ml_conf:.3f}) pero falló condición técnica:")
-             if not trend_bullish and not trend_bearish:
-                 print(f"   -> Tendencia indefinida (Doji?)")
-             elif trend_bullish and not rsi_ok_buy:
-                 print(f"   -> BUY fallido por RSI > 70 ({rsi:.2f})")
-             elif trend_bearish and not rsi_ok_sell:
-                 print(f"   -> SELL fallido por RSI <= 60 ({rsi:.2f})")
+        # DEBUG EXHAUSTIVO si estamos cerca pero falló
+        if signal_generated == 0 and ml_conf >= start_threshold:
+             # Solo imprimir 1 de cada 10 para no saturar si hay muchas
+             if i % 10 == 0:
+                 print(f"[DEBUG MISSED {self.symbol}] ML OK ({ml_conf:.3f}) RSI={rsi:.1f} Limits B<{rsi_buy_limit}/S>{rsi_sell_limit} Trend={'BULL' if trend_bullish else 'BEAR'}")
 
-        print(f"[DEBUG SIGNAL] NO SIGNAL: trend_bullish={trend_bullish}, trend_bearish={trend_bearish}, rsi_ok_buy={rsi_ok_buy}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
-        return 0
+        return signal_generated
 
     def _generate_signals(self, data: pd.DataFrame, symbol: str, ml_confidence_all: pd.Series) -> pd.Series:
         """

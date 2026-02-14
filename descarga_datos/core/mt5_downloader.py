@@ -36,21 +36,49 @@ class MT5Downloader:
     def initialize(self) -> bool:
         """Inicializa la conexión con MT5"""
         if not MT5_AVAILABLE:
-            self.logger.warning("MT5 no disponible")
+            self.logger.warning("MT5 no disponible (librería no instalada)")
             return False
 
         try:
-            if not mt5.initialize():
+            # Obtener terminal_path del config (self.config puede ser MT5Config o Config completo)
+            terminal_path = None
+            if hasattr(self.config, 'terminal_path') and self.config.terminal_path:
+                terminal_path = self.config.terminal_path
+            elif hasattr(self.config, 'mt5') and hasattr(self.config.mt5, 'terminal_path'):
+                terminal_path = self.config.mt5.terminal_path
+            
+            # Inicializar MT5 con path si está disponible
+            if terminal_path:
+                self.logger.info(f"Inicializando MT5 con path: {terminal_path}")
+                init_ok = mt5.initialize(path=terminal_path)
+            else:
+                self.logger.info("Inicializando MT5 (auto-detect)")
+                init_ok = mt5.initialize()
+            
+            if not init_ok:
                 self.logger.error(f"Error al inicializar MT5: {mt5.last_error()}")
                 return False
 
             # Login si se proporcionan credenciales
-            if hasattr(self.config, 'mt5') and self.config.mt5.login:
-                if not mt5.login(
-                    self.config.mt5.login,
-                    password=self.config.mt5.password,
-                    server=self.config.mt5.server
-                ):
+            # self.config puede ser MT5Config directo o Config completo con .mt5
+            login = None
+            password = None
+            server = None
+            
+            if hasattr(self.config, 'login') and self.config.login:
+                # self.config ES MT5Config directamente
+                login = self.config.login
+                password = getattr(self.config, 'password', '')
+                server = getattr(self.config, 'server', '')
+            elif hasattr(self.config, 'mt5') and hasattr(self.config.mt5, 'login') and self.config.mt5.login:
+                # self.config es Config completo con subobjet mt5
+                login = self.config.mt5.login
+                password = getattr(self.config.mt5, 'password', '')
+                server = getattr(self.config.mt5, 'server', '')
+            
+            if login:
+                self.logger.info(f"Haciendo login en MT5: cuenta={login}, servidor={server}")
+                if not mt5.login(login, password=password, server=server):
                     self.logger.error(f"Error en login MT5: {mt5.last_error()}")
                     return False
 

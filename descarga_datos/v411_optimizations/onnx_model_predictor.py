@@ -86,7 +86,13 @@ class ONNXModelPredictor:
         # Get input/output info
         self.input_name = self.sess.get_inputs()[0].name
         self.input_shape = self.sess.get_inputs()[0].shape
-        self.output_name = self.sess.get_outputs()[0].name
+        
+        # Sklearn classifiers exportados a ONNX tienen 2 salidas:
+        #   output[0] = labels (int64)
+        #   output[1] = probabilities (float, shape [N, n_classes])
+        self.output_names = [o.name for o in self.sess.get_outputs()]
+        self.output_name = self.output_names[0]  # labels
+        self.has_probabilities = len(self.output_names) >= 2
         self.output_shape = self.sess.get_outputs()[0].shape
         
         # Metadata
@@ -100,8 +106,8 @@ class ONNXModelPredictor:
         
         logger.info(f"[OK] ONNX Model loaded: {os.path.basename(model_path)}")
         logger.info(f"   Providers: {self.providers_used}")
+        logger.info(f"   Outputs: {self.output_names} (has_proba={self.has_probabilities})")
         logger.info(f"   Input shape: {self.input_shape}")
-        logger.info(f"   Output shape: {self.output_shape}")
     
     def predict(self, features: np.ndarray) -> np.ndarray:
         """
@@ -122,16 +128,25 @@ class ONNXModelPredictor:
         # Ensure float32
         features = features.astype(np.float32)
         
-        # Run inference
+        # Run inference - pedir probabilidades si están disponibles
         t_start = time.time()
-        result = self.sess.run([self.output_name], {self.input_name: features})
+        if self.has_probabilities:
+            result = self.sess.run(self.output_names, {self.input_name: features})
+            probas = result[1]  # output[1] = probabilidades
+        else:
+            result = self.sess.run([self.output_name], {self.input_name: features})
+            probas = result[0]
         t_inference = time.time() - t_start
         
         # Update metrics
         self.prediction_count += 1
         self.total_time += t_inference
         
-        return result[0]
+        # Convertir dict de ZipMap a array si es necesario
+        if isinstance(probas, list) and len(probas) > 0 and isinstance(probas[0], dict):
+            probas = np.array([[d.get(0, 0), d.get(1, 0)] for d in probas])
+        
+        return np.array(probas)
     
     def predict_batch(self, features_batch: np.ndarray) -> np.ndarray:
         """
@@ -146,8 +161,20 @@ class ONNXModelPredictor:
             Prediction array
         """
         features_batch = features_batch.astype(np.float32)
-        result = self.sess.run([self.output_name], {self.input_name: features_batch})
-        return result[0]
+        
+        # Devolver probabilidades si están disponibles (output[1])
+        if self.has_probabilities:
+            result = self.sess.run(self.output_names, {self.input_name: features_batch})
+            probas = result[1]  # output[1] = probabilidades
+        else:
+            result = self.sess.run([self.output_name], {self.input_name: features_batch})
+            probas = result[0]
+        
+        # Convertir dict de ZipMap a array si es necesario
+        if isinstance(probas, list) and len(probas) > 0 and isinstance(probas[0], dict):
+            probas = np.array([[d.get(0, 0), d.get(1, 0)] for d in probas])
+        
+        return np.array(probas)
     
     def get_avg_inference_time(self) -> float:
         """Get average inference time in milliseconds."""
@@ -259,122 +286,95 @@ class SklearnToONNXConverter:
 
 
 # ============================================================================
-# MOCK PREDICTOR (for testing without ONNX Runtime)
-# ============================================================================
-
-class MockONNXPredictor:
-    """
-    Mock ONNX predictor for testing.
-    
-    Simulates ONNX predictions without requiring ONNX Runtime.
-    """
-    
-    def __init__(self, model_path: str = None):
-        self.prediction_count = 0
-        self.total_time = 0.0
-        logger.info("[WARN] Using Mock ONNX Predictor (for testing)")
-    
-    def predict(self, features: np.ndarray) -> np.ndarray:
-        """Simulate prediction with latency."""
-        import time
-        time.sleep(0.001)  # Simulate 1ms
-        
-        self.prediction_count += 1
-        
-        # Return mock signal (0=HOLD, 1=BUY, 2=SELL)
-        if isinstance(features, list):
-            features = np.array(features)
-        if features.ndim == 1:
-            features = features.reshape(1, -1)
-        
-        predictions = np.random.randint(0, 3, size=(features.shape[0], 1))
-        return predictions
-    
-    def get_avg_inference_time(self) -> float:
-        return 1.0  # Mock: 1ms
-
-
-# ============================================================================
 # FACTORY
 # ============================================================================
 
 def create_predictor(
     model_path: str = None,
     use_cuda: bool = False,
-    use_mock: bool = False
+    use_mock: bool = False # Deprecated, ignored
 ) -> object:
     """
     Create appropriate predictor based on availability.
     
-    Returns ONNX predictor if available, else mock.
+    Returns ONNX predictor if available, else None (fallback to sklearn).
+    STRICT MODE: No Mocks allowed.
     """
-    if use_mock:
-         return MockONNXPredictor(model_path)
-
     if not model_path:
-        return MockONNXPredictor(None)
+        return None
 
     if ONNXRUNTIME_AVAILABLE and os.path.exists(model_path):
-        return ONNXModelPredictor(model_path, use_cuda=use_cuda)
+        try:
+            return ONNXModelPredictor(model_path, use_cuda=use_cuda)
+        except Exception as e:
+            logger.error(f"Error loading ONNX model {model_path}: {e}")
+            return None
     else:
-        logger.warning(f"Using MockONNXPredictor (ONNX Runtime: {ONNXRUNTIME_AVAILABLE}, Path exists: {os.path.exists(model_path)})")
-        return MockONNXPredictor(model_path)
+        if not ONNXRUNTIME_AVAILABLE:
+            logger.warning("ONNX Runtime not available. Falling back to sklearn (slower but REAL).")
+        elif not os.path.exists(model_path):
+             logger.warning(f"ONNX model file not found: {model_path}. Falling back to sklearn.")
+        return None
 
 
 # ============================================================================
 # BENCHMARK
 # ============================================================================
 
-def benchmark_onnx():
-    """Benchmark ONNX predictions."""
-    import time
-    
-    print("\n v4.11 Optimization 3: ONNX ML Model Benchmark")
-    print("=" * 70)
-    
-    if not ONNXRUNTIME_AVAILABLE:
-        print("[X] ONNX Runtime not available")
-        print("Install with: pip install onnxruntime onnx")
-        return
-    
-    print("[OK] ONNX Runtime available")
-    
-    # Simulate available providers
-    print("\n Available Execution Providers:")
-    print("   - CPUExecutionProvider (always available)")
-    print("   - CUDAExecutionProvider (if CUDA installed)")
-    print("   - TensorrtExecutionProvider (if TensorRT installed)")
-    
-    # Benchmark with mock data
-    print("\n Inference Speed (mock)")
-    n_features = 25
-    batch_sizes = [1, 10, 100]
-    
-    for batch_size in batch_sizes:
-        features = np.random.rand(batch_size, n_features).astype(np.float32)
-        
-        # Simulate predictions
-        times = []
-        for _ in range(100):
-            t_start = time.time()
-            # Simulate 1ms inference per batch
-            time.sleep(0.001)
-            times.append(time.time() - t_start)
-        
-        avg_time = np.mean(times) * 1000
-        print(f"   Batch size {batch_size:3d}: {avg_time:.2f}ms/batch ({avg_time/batch_size:.3f}ms/sample)")
-    
-    print("\n Expected Performance (vs sklearn RandomForest)")
-    print("   sklearn RandomForest: 20ms per prediction")
-    print("   ONNX Runtime:         1ms per prediction")
-    print("   Speedup:              20x faster")
-    
-    print("\n Tips:")
-    print("   - Warm up model before inference (first call is slow)")
-    print("   - Use batch inference for multiple predictions")
-    print("   - CUDA provides 2-5x speedup on GPU")
+# ============================================================================
+# BENCHMARK
+# ============================================================================
+
+# def benchmark_onnx():
+#     """Benchmark ONNX predictions."""
+#     import time
+#     
+#     print("\n v4.11 Optimization 3: ONNX ML Model Benchmark")
+#     print("=" * 70)
+#     
+#     if not ONNXRUNTIME_AVAILABLE:
+#         print("[X] ONNX Runtime not available")
+#         print("Install with: pip install onnxruntime onnx")
+#         return
+#     
+#     print("[OK] ONNX Runtime available")
+#     
+#     # Simulate available providers
+#     print("\n Available Execution Providers:")
+#     print("   - CPUExecutionProvider (always available)")
+#     print("   - CUDAExecutionProvider (if CUDA installed)")
+#     print("   - TensorrtExecutionProvider (if TensorRT installed)")
+#     
+#     # Benchmark with mock data
+#     # print("\n Inference Speed (mock)")
+#     # n_features = 25
+#     # batch_sizes = [1, 10, 100]
+#     # 
+#     # for batch_size in batch_sizes:
+#     #     features = np.random.rand(batch_size, n_features).astype(np.float32)
+#     #     
+#     #     # Simulate predictions
+#     #     times = []
+#     #     for _ in range(100):
+#     #         t_start = time.time()
+#     #         # Simulate 1ms inference per batch
+#     #         time.sleep(0.001)
+#     #         times.append(time.time() - t_start)
+#     #     
+#     #     avg_time = np.mean(times) * 1000
+#     #     print(f"   Batch size {batch_size:3d}: {avg_time:.2f}ms/batch ({avg_time/batch_size:.3f}ms/sample)")
+#     
+#     print("\n Expected Performance (vs sklearn RandomForest)")
+#     print("   sklearn RandomForest: 20ms per prediction")
+#     print("   ONNX Runtime:         1ms per prediction")
+#     print("   Speedup:              20x faster")
+#     
+#     print("\n Tips:")
+#     print("   - Warm up model before inference (first call is slow)")
+#     print("   - Use batch inference for multiple predictions")
+#     print("   - CUDA provides 2-5x speedup on GPU")
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    benchmark_onnx()
+    # benchmark_onnx()

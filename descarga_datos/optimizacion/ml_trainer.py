@@ -395,6 +395,15 @@ class MLTrainer:
 
     def save_models(self, results, feature_names):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Importar converter ONNX (lazy import para evitar ciclos si es necesario)
+        try:
+            from v411_optimizations.onnx_model_predictor import SklearnToONNXConverter
+            EXPORT_ONNX = True
+        except ImportError:
+            logger.warning("No se pudo importar SklearnToONNXConverter - No se exportará ONNX")
+            EXPORT_ONNX = False
+
         for name, data in results.items():
             # Guardar modelo y scaler juntos en un diccionario
             model_data = {
@@ -418,6 +427,37 @@ class MLTrainer:
 
             model_path = self.models_dir / f'{name}_{timestamp}.joblib'
             joblib.dump(model_data, model_path)
+
+            # EXPORTACIÓN ONNX REAL
+            if EXPORT_ONNX and name == 'RandomForest':
+                onnx_path = self.models_dir / f'{name}_{timestamp}.onnx'
+                n_features = len(feature_names)
+                
+                logger.info(f"Exportando modelo ONNX real: {onnx_path}")
+                try:
+                    success = SklearnToONNXConverter.convert_random_forest(
+                        data['model'], 
+                        n_features, 
+                        str(onnx_path), 
+                        optimize=True
+                    )
+                    if not success:
+                         logger.error(f"Fallo en conversión ONNX para {name}")
+                except Exception as e:
+                    logger.error(f"Excepción al exportar ONNX: {e}")
+            
+            elif EXPORT_ONNX and name == 'GradientBoosting':
+                 onnx_path = self.models_dir / f'{name}_{timestamp}.onnx'
+                 n_features = len(feature_names)
+                 try:
+                    success = SklearnToONNXConverter.convert_gradient_boosting(
+                        data['model'], 
+                        n_features, 
+                        str(onnx_path), 
+                        optimize=True
+                    )
+                 except Exception as e:
+                    logger.error(f"Excepción al exportar ONNX GB: {e}")
 
             # También guardar metadata por separado para compatibilidad
             metadata = {

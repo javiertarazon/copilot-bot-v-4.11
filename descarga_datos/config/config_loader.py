@@ -27,6 +27,7 @@ class MT5Config:
     login: int = 0
     password: str = ""
     timeout: int = 60000
+    mt5_files_path: str = ""
 
 
 @dataclass
@@ -453,6 +454,21 @@ def _inject_env_credentials(config: Config) -> None:
             config.exchanges['bybit'].api_key = bybit_key
         if bybit_secret:
             config.exchanges['bybit'].api_secret = bybit_secret
+    
+    # Inyectar credenciales de MT5
+    mt5_login = os.getenv('MT5_LOGIN', '')
+    mt5_password = os.getenv('MT5_PASSWORD', '')
+    mt5_server = os.getenv('MT5_SERVER', '')
+    
+    if mt5_login:
+        try:
+            config.mt5.login = int(mt5_login)
+        except (ValueError, TypeError):
+            pass
+    if mt5_password:
+        config.mt5.password = mt5_password
+    if mt5_server:
+        config.mt5.server = mt5_server
 
 
 def save_config_to_yaml(config: Config, config_path: Optional[str] = None) -> None:
