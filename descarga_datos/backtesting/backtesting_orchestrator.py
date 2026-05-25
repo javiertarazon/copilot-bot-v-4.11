@@ -598,7 +598,9 @@ async def run_backtest_with_existing_data(config):
                 print(f"[BACKTEST] 📥 Cargando datos existentes para {symbol}...")
                 table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{config.backtesting.timeframe}"
                 print(f"[DEBUG] Buscando tabla: {table_name}")
-                df = storage.query_data(table_name, None, None)
+                start_ts = int(pd.Timestamp(config.backtesting.start_date).timestamp()) if getattr(config.backtesting, 'start_date', None) else None
+                end_ts = int(pd.Timestamp(config.backtesting.end_date).timestamp()) if getattr(config.backtesting, 'end_date', None) else None
+                df = storage.query_data(table_name, start_ts, end_ts)
                 print(f"[DEBUG] query_data devolvió: {type(df)}, len: {len(df) if df is not None else 'None'}")
 
                 if df is not None and not df.empty:
