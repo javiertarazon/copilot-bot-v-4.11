@@ -1,222 +1,55 @@
-# 🚨 INSTRUCCIONES PRIORITARIAS - BOT TRADER COPILOT v4.11
+# Instrucciones prioritarias del repositorio canónico
 
-## 📋 REGLAS FUNDAMENTALES DE OPERACIÓN
+## Reglas fundamentales
 
-### 🔴 REGLA #1: IDIOMA ESPAÑOL OBLIGATORIO
-- **TODAS las respuestas, pensamientos y comunicaciones DEBEN ser en ESPAÑOL**
-- **TODOS los comentarios de código DEBEN ser en ESPAÑOL**
-- **TODA la documentación nueva DEBE ser en ESPAÑOL**
-- **EXCEPCIÓN**: Solo nombres de variables, funciones y clases en inglés (estándar de programación)
+### 1. Idioma
 
-### 🔴 REGLA #2: ENTORNO VIRTUAL PYTHON 3.11 EXCLUSIVO
-- **ÚNICO entorno permitido**: Python 3.11.x en entorno virtual
-- **NUNCA usar Python del sistema** (puede causar conflictos de dependencias)
-- **SIEMPRE activar entorno virtual antes de ejecutar scripts**:
-  ```bash
-  # Windows
-  .venv\Scripts\activate
-  
-  # Linux/Mac
-  source .venv/bin/activate
-  ```
-- **Verificar versión antes de ejecutar**:
-  ```bash
-  python --version  # Debe mostrar Python 3.11.x
-  ```
+- Documentación y mensajes operativos en español.
+- Nombres de variables, funciones y clases en inglés.
 
-### 🔴 REGLA #3: PUNTO DE ENTRADA ÚNICO
-- **ÚNICO script autorizado**: `descarga_datos/main.py`
-- **NUNCA ejecutar scripts individuales** sin autorización explícita
-- **SIEMPRE usar argumentos del main.py**:
-  ```bash
-  python descarga_datos/main.py --backtest    # Backtesting
-  python descarga_datos/main.py --live-mt5    # Trading en vivo MT5
-  python descarga_datos/main.py --optimize    # Optimización ML
-  ```
+### 2. Punto de entrada
 
----
+- El único punto de entrada operativo es:
+  - `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py`
 
-## ⚠️ ERRORES CRÍTICOS DOCUMENTADOS - NO REPETIR
+### 3. Alcance
 
-### 🚫 ERROR #1: AutoTrading Deshabilitado (Error 10027)
-**SÍNTOMA**: `Error 10027: Total de posiciones abiertas excedido`
-**CAUSA REAL**: AutoTrading deshabilitado en MetaTrader 5
-**SOLUCIÓN OBLIGATORIA**:
-1. Abrir MT5 → Tools → Options → Expert Advisors
-2. ✅ Marcar "Allow automated trading"
-3. ✅ Marcar "Allow DLL imports"
-4. Reiniciar MT5 completamente
-5. Verificar: `python descarga_datos/tests/diagnose_simple.py`
+- Un único bot
+- Un único símbolo: `XAUUSD`
+- Un único timeframe: `15m`
+- Una única estrategia inicial: `UltraDetailedHeikinAshiML`
+- Un único flujo live: `MT5 demo`
 
-**DOCUMENTACIÓN**: `SOLUCION_ERROR_10027.md`
+### 4. Promoción obligatoria
 
-### 🚫 ERROR #2: Inconsistencia de Timeframes
-**PROBLEMA**: Backtest usa 4h, Live MT5 usa 15m → Señales diferentes
-**SOLUCIÓN**: Alinear timeframes en `config/config.yaml`
-```yaml
-backtesting:
-  timeframe: 15m  # Cambiar de 4h a 15m
+Ninguna versión se ejecuta en demo o real sin pasar este orden:
 
-# O cambiar live a 4h si es preferible
-```
+1. entrenamiento
+2. validación
+3. prueba final
+4. sandbox/demo
 
-### 🚫 ERROR #3: Parámetros Duplicados
-**PROBLEMA**: `base_parameters` y `optimized_parameters` duplicados en config.yaml
-**SOLUCIÓN**: Usar solo `optimized_parameters` por símbolo
-**ACCIÓN**: Eliminar duplicación y consolidar parámetros
+### 5. Credenciales
 
-### 🚫 ERROR #4: RSI Signal Filter Bloqueado
-**PROBLEMA**: `rsi_ok_sell = rsi > 30` bloqueaba señales SELL
-**SOLUCIÓN APLICADA**: Cambiado a `rsi_ok_sell = rsi < 60`
-**UBICACIÓN**: `strategies/ultra_detailed_heikin_ashi_ml_strategy.py:1060`
+- No guardar credenciales en documentación ni en YAML.
+- Usar variables de entorno o `.env`.
+- Plantilla oficial:
+  - `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/.env.example`
 
-### 🚫 ERROR #5: Position Size No Recibido
-**PROBLEMA**: Position size no se pasaba del risk management al executor
-**SOLUCIÓN APLICADA**: Agregado `signal_data['position_size'] = position_size`
-**UBICACIÓN**: `core/live_trading_orchestrator.py`
+### 6. Archivos canónicos
 
----
+- Configuración: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/config/config.yaml`
+- Validación: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/docs/VALIDACION_XAUUSD.md`
+- Estrategia principal: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/strategies/ultra_detailed_heikin_ashi_ml_strategy.py`
 
-## 📁 ESTRUCTURA DE ARCHIVOS PROTEGIDOS
+## Comandos oficiales
 
-### 🔒 ARCHIVOS CRÍTICOS - NO MODIFICAR SIN AUTORIZACIÓN
-```
-descarga_datos/
-├── main.py                           # 🚨 PUNTO DE ENTRADA ÚNICO
-├── config/config.yaml                # 🚨 CONFIGURACIÓN CENTRALIZADA
-├── core/
-│   ├── live_trading_orchestrator.py  # 🚨 ORQUESTADOR PRINCIPAL
-│   └── mt5_order_executor.py         # 🚨 EJECUTOR DE ÓRDENES
-├── strategies/
-│   └── ultra_detailed_heikin_ashi_ml_strategy.py  # 🚨 ESTRATEGIA PRINCIPAL
-└── ACCION_INMEDIATA.txt              # 🚨 PROBLEMAS CRÍTICOS
-```
-
-### 📋 ARCHIVOS DE REFERENCIA OBLIGATORIA
-```
-ARCHIVOS MD/
-├── SOLUCION_ERROR_10027.md           # Error AutoTrading
-├── CHANGELOG_v4.9.md                 # Cambios v4.9
-├── EXECUTIVE_SUMMARY_V411_FINAL.md   # Resumen v4.11
-├── GUIA_IMPLEMENTACION_V411.md       # Guía implementación
-└── PLAN_V411_OPTIMIZACIONES.md       # Plan optimizaciones
-```
-
----
-
-## 🔧 CONFIGURACIÓN OBLIGATORIA
-
-### 📋 Variables de Entorno (.env)
 ```bash
-# MT5 Configuration (OBLIGATORIO)
-MT5_LOGIN=5899273
-MT5_PASSWORD=Jatr280371$
-MT5_SERVER=Deriv-Demo
-MT5_PATH=C:\Program Files\MetaTrader 5\terminal64.exe
-
-# CCXT Configuration (OPCIONAL - Deshabilitado por defecto)
-BINANCE_API_KEY=
-BINANCE_SECRET_KEY=
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --train-ml
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --backtest-only
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --validation-report
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --live-mt5
 ```
-
-### ⚙️ Configuración Principal (config.yaml)
-```yaml
-# CONFIGURACIÓN VALIDADA - NO CAMBIAR SIN AUTORIZACIÓN
-backtesting:
-  timeframe: 4h                    # ⚠️ INCONSISTENCIA: Live usa 15m
-  symbols: [EURUSD]
-  initial_capital: 1000
-
-live_trading:
-  account_type: 'DEMO'
-  max_positions: 5
-  risk_per_trade: 0.02
-
-mt5:
-  enabled: true                    # ✅ PROVEEDOR PRINCIPAL
-  login: 5899273
-  server: 'Deriv-Demo'
-
-exchanges:
-  binance:
-    enabled: false                 # ❌ DESACTIVADO - Usando MT5
-```
-
----
-
-## 🚀 PROCEDIMIENTOS DE EJECUCIÓN
-
-### 📊 Backtesting (VALIDADO)
-```bash
-# 1. Activar entorno virtual
-.venv\Scripts\activate
-
-# 2. Verificar Python 3.11
-python --version
-
-# 3. Ejecutar backtest
-python descarga_datos/main.py --backtest
-
-# 4. Verificar resultados en dashboard
-# http://localhost:8501
-```
-
-### 📈 Live Trading MT5 (OPERATIVO)
-```bash
-# 1. Verificar MT5 abierto y conectado
-python descarga_datos/tests/diagnose_simple.py
-# Debe mostrar: "Trading permitido: True ✅"
-
-# 2. Si False, habilitar AutoTrading en MT5
-# Tools → Options → Expert Advisors → Allow automated trading
-
-# 3. Ejecutar live trading
-python descarga_datos/main.py --live-mt5
-
-# 4. Monitorear logs
-Get-Content descarga_datos/logs/live_trading.log -Wait
-```
-
-### 🧠 Optimización ML
-```bash
-# 1. Entrenar modelos (OPCIONAL - Ya entrenados)
-python descarga_datos/main.py --optimize
-
-# 2. Verificar modelos en models/
-ls descarga_datos/models/
-```
-
----
-
-## 📊 MÉTRICAS DE VALIDACIÓN
-
-### ✅ Backtest Validado (Base de Comparación)
-```
-Capital Inicial: $1,000
-Capital Final: $6,272.97
-ROI: 627.3%
-Trades Totales: 7,896
-Win Rate: 79.9%
-Max Drawdown: -12.34%
-Profit Factor: 2.45x
-Risk/Reward: 1:2.50
-```
-
-### ✅ Live Trading Operativo (Estado Actual)
-```
-Cuenta: 5899273 (Deriv Demo)
-Saldo: $9,997.02
-Símbolo: Volatility 75 Index
-Timeframe: 15m (⚠️ Diferente a backtest 4h)
-Position Size: 0.001 lotes
-Stop Loss: ATR × 3.25 = 430.28 pts
-Take Profit: ATR × 5.5 = 1075.70 pts
-ML Confidence: 0.59-0.63 (>0.50 threshold)
-```
-
----
-
-## 🔍 DIAGNÓSTICOS OBLIGATORIOS
 
 ### 🩺 Verificación de Sistema
 ```bash

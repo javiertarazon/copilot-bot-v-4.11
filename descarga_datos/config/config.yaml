@@ -1,19 +1,28 @@
-# ✅ CONFIGURACIÓN PRODUCTIVA CENTRALIZADA - BOT TRADER v4.8
-# Sistema migrado a MT5 con Volatility 75 Index de Deriv
-# TIMEFRAME: 15m (alineado con modelo ML entrenado)
-# CAPITAL: 10000 USD (demo Deriv)
-# 🔄 ACTUALIZADO: 1-Nov-2025 - Usando MT5 Deriv para Trading con Volatility Indices
+system:
+  name: "Bot Trader Copilot XAUUSD"
+  version: "4.11-canonical"
+  log_level: "INFO"
+  log_file: "descarga_datos/logs/bot_trader_xauusd.log"
+  auto_launch_dashboard: false
 
-active_exchange: binance
+active_exchange: mt5
 
 backtesting:
-  commission: 0.1                    # 0.1% comisión
-  data_quality: null
-  end_date: '2025-10-24'             # Backtest: 24-Junio-2024 a 24-Oct-2025
-  initial_capital: 1000              # 1000 USD (Capital inicial)
-  start_date: '2024-06-01'           # Backtest: 01-Junio-2024
-  
-  # ✅ PARÁMETROS BASE - Copiados de config_original.yaml
+  commission: 0.1
+  end_date: "2025-05-31"
+  initial_capital: 1000
+  start_date: "2023-01-01"
+  timeframe: "15m"
+  symbols:
+    - XAUUSD
+  symbol_selection:
+    XAUUSD: true
+  strategies:
+    UltraDetailedHeikinAshiML: true
+  strategy_paths:
+    UltraDetailedHeikinAshiML:
+      - strategies.ultra_detailed_heikin_ashi_ml_strategy
+      - UltraDetailedHeikinAshiMLStrategy
   base_parameters:
     atr_period: 17
     cci_threshold: 90
@@ -34,13 +43,8 @@ backtesting:
     stoch_oversold: 35
     stop_loss_atr_multiplier: 2.25
     take_profit_atr_multiplier: 3.75
-  # Permitir instrumentos sintéticos (ej. Volatility Indices) con volume=0
-  # Ajuste temporal: 0.0 para evitar que filtros de volumen bloqueen señales en live
-  volume_ratio_min: 0.0
-  
-  # ⚠️ PARÁMETROS OPTIMIZADOS (Por símbolo)
   optimized_parameters:
-    EURUSD:
+    XAUUSD:
       atr_period: 17
       cci_threshold: 90
       ema_trend_period: 50
@@ -60,70 +64,68 @@ backtesting:
       stoch_oversold: 35
       stop_loss_atr_multiplier: 2.25
       take_profit_atr_multiplier: 3.75
-  # EURUSD tiene volumen normal en Forex
+  data_quality:
+    min_coverage_pct: 98.0
+    auto_retry: true
+    gap_fill:
+      enabled: false
+      method: forward
+      max_consecutive: 2
   volume_ratio_min: 0.1
-  # Forzar umbral de volumen a 0 para que checks como `volume > 0` no bloqueen señales
   volume_threshold: 0
-  
-  slippage: 0.05                     # Slippage de config_original
-  
-  strategies:
-    HeikinNeuronalMLPruebas: false
-    UltraDetailedHeikinAshiML: true
-  
-  strategy_paths:
-    HeikinNeuronalMLPruebas:
-    - strategies.heikin_neuronal_ml_pruebas
-    - HeikinNeuronalMLPruebasStrategy
-    UltraDetailedHeikinAshiML:
-    - strategies.ultra_detailed_heikin_ashi_ml_strategy
-    - UltraDetailedHeikinAshiMLStrategy
-  
-  symbol_selection:
-    EURUSD: true                     # ✅ EURUSD (Forex MT5)
-  
-  symbols:
-    - EURUSD                         # ✅ Símbolo: EURUSD (MT5 Forex)
-  timeframe: 4h                      # Timeframe para Forex
-  
-  # ========== TIPO DE TRADING ==========
-  # MT5 Deriv usa margin trading con apalancamiento
-  trading_mode: margin              # MARGIN: Apalancamiento directo en Deriv
-  
-  # Configuración de Margin Trading (DERIV MT5)
-  margin_type: cross                # 'cross' (riesgo compartido)
-  margin_leverage: 1                # 1x para demo (sin apalancamiento inicial)
+  slippage: 0.05
+  trading_mode: margin
+  margin_type: cross
+  margin_leverage: 1
 
-# ⚡ CONFIGURACIÓN LIVE TRADING - MT5 DERIV (v4.9)
 live_trading:
-  # Configuración de cuenta y modo de trading
-  account_type: 'DEMO'              # 'DEMO' para Deriv demo account
-  trading_mode: 'margin'            # 'margin' para MT5 Deriv
-  enable_position_limit: true       # Limitar posiciones concurrentes
-  max_positions: 5                  # Máximo 5 posiciones concurrentes (v4.9 FIX)
-  allow_multiple_positions_same_symbol: true  # Permite múltiples por símbolo (v4.9 FIX)
-  
-  # Configuración de riesgo
-  risk_per_trade: 0.02              # 2% riesgo por trade
-  max_account_drawdown: 0.05        # 5% máximo drawdown de cuenta
-  
-  # Configuración de sincronización
-  position_sync_timeout: 5          # Timeout para sincronización de posiciones
-  position_sync_interval_seconds: 30  # Reducido a 30 seg para sincronización más rápida (v4.9)
-  position_sync_interval: 10        # Intervalo entre sincronizaciones
-  use_open_orders_only: false       # Usar solo órdenes abiertas para sincronización
-  
-  # Configuración de órdenes
-  order_lock_timeout: 30            # Timeout para bloqueo de órdenes
-  
-  # Configuración específica de MT5
-  margin_type: 'cross'              # 'cross' para Deriv
-  margin_leverage: 1                # 1x leverage (sin apalancamiento para demo)
-  
-  # Configuración de cierre automático (v4.9)
-  enable_auto_close_tp_sl: true     # Habilitar cierre automático en TP/SL
-  enable_trailing_stop: true        # Habilitar trailing stop dinámico
-  trailing_stop_pct: 0.65           # Trailing stop al 0.65%
+  enabled: false
+  mode: "MT5"
+  account_type: "DEMO"
+  active_symbol: "XAUUSD"
+  active_strategy: "UltraDetailedHeikinAshiML"
+  risk_per_trade: 0.02
+  max_positions: 1
+  max_positions_per_symbol: 1
+  update_interval_seconds: 5
+  initial_history_bars: 1000
+  apply_risk_management: true
+  mt5_symbols:
+    - XAUUSD
+  mt5_timeframes:
+    - 15m
+  strategy_mapping:
+    UltraDetailedHeikinAshiML:
+      active: true
+      symbols:
+        - XAUUSD
+      timeframes:
+        - 15m
+      parameters:
+        initial_balance: 1000
+  validation:
+    required_stages:
+      - training
+      - validation
+      - final_test
+      - sandbox_demo
+    completed_stages:
+      training: false
+      validation: false
+      final_test: false
+      sandbox_demo: false
+    promotion_rules:
+      demo_requires:
+        - training
+        - validation
+        - final_test
+      real_requires:
+        - training
+        - validation
+        - final_test
+        - sandbox_demo
+    allow_real_trading: false
+    current_stage: training
 
 compensation_strategy:
   compensation_max_loss: 1.0
@@ -139,54 +141,53 @@ data:
   limit_per_request: 2000
   max_retries: 3
   retry_delay: 5
-  use_ccxt_for_crypto: false        # ❌ DESACTIVADO - Usando MT5
-  use_mt5_for_stocks: true          # ✅ ACTIVADO - Usando MT5 para Volatility Indices
+  use_ccxt_for_crypto: false
+  use_mt5_for_stocks: true
   validate_data: true
 
-# 🔧 CONFIGURACIÓN MT5 - DERIV
 mt5:
-  enabled: true                     # ✅ ACTIVADO - Proveedor principal
-  login: 175399                     # ⚠️ Se carga desde .env: MT5_LOGIN
-  password: ''                      # ⚠️ Se carga desde .env: MT5_PASSWORD
-  server: 'ThinkMarkets-Demo'       # Servidor ThinkMarkets Demo
-  terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'  # Ruta MT5
+  enabled: true
+  login: 0
+  password: ""
+  server: "ThinkMarkets-Demo"
+  terminal_path: ""
   timeout: 30000
 
 exchanges:
   binance:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO - Usando MT5 Deriv
+    api_key: ""
+    api_secret: ""
+    enabled: false
     sandbox: true
     timeout: 30000
   kraken:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO - Usando MT5 Deriv
+    api_key: ""
+    api_secret: ""
+    enabled: false
     sandbox: true
     timeout: 30000
   krakenfutures:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO - Usando MT5 Deriv
-    sandbox: true          # ⚠️ NOTA: Requiere cuenta real para operar con CCXT
+    api_key: ""
+    api_secret: ""
+    enabled: false
+    sandbox: true
     timeout: 30000
   bybit:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO
+    api_key: ""
+    api_secret: ""
+    enabled: false
     sandbox: true
     timeout: 30000
   okx:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO
+    api_key: ""
+    api_secret: ""
+    enabled: false
     sandbox: true
     timeout: 30000
   kucoin:
-    api_key: ''
-    api_secret: ''
-    enabled: false         # ❌ DESACTIVADO
+    api_key: ""
+    api_secret: ""
+    enabled: false
     sandbox: true
     timeout: 30000
 
@@ -194,78 +195,38 @@ indicators:
   adx:
     enabled: true
     period: 14
-    threshold: 20          # Reducido de 25 (menos restrictivo)
+    threshold: 20
   atr:
     enabled: true
     period: 14
   ema:
     enabled: true
     periods:
-    - 10
-    - 20
-    - 200
+      - 10
+      - 20
+      - 200
   heikin_ashi:
     enabled: true
-    size_comparison_threshold: 1.0     # Reducido de 1.2 (más sensible)
+    size_comparison_threshold: 1.0
     trend_period: 3
   parabolic_sar:
-    acceleration: 0.03                 # Aumentado de 0.02
+    acceleration: 0.03
     enabled: true
-    maximum: 0.25                      # Aumentado de 0.2
+    maximum: 0.25
   volatility:
     enabled: true
     method: standard_deviation
     period: 14
 
-# 🧪 CONFIGURACIÓN ESPECÍFICA PARA PRUEBAS
-live_trading_test:
-  enabled: true
-  log_all_signals: true                # Registra todos los signals
-  max_trades_per_session: 10           # Límite de trades por sesión de pruebas
-  test_duration_minutes: 60            # Duración de prueba (1 hora)
-  detailed_logging: true               # Logs detallados de cada operación
-  validate_calculations: true          # Valida cálculos en cada trade
-  print_trade_details: true            # Imprime detalles en consola
-
-# 📊 RESUMEN DE CAMBIOS VS PRODUCTIVO
-# ================================
-# PARÁMETRO                    | PRODUCTIVO | PRUEBAS | RAZÓN
-# --------------------------------
-# max_concurrent_trades        | 1         | 2       | ↑ Más operaciones
-# risk_per_trade               | 0.02      | 0.03    | ↑ Más riesgo permitido
-# cci_threshold                | 90        | 85      | ↓ Menos restrictivo
-# ml_threshold                 | 0.2       | 0.15    | ↓ Más sensible
-# initial_capital              | 800       | 100     | ↓ Menos capital
-# max_portfolio_heat           | 0.05      | 0.08    | ↑ Más calor de cartera
-# liquidity_score_min          | 5         | 3       | ↓ Menos restrictivo
-# stoch_oversold               | 35        | 30      | ↓ Más oportunidades
-# volume_ratio_min             | 0.3       | 0.2     | ↓ Menos restrictivo
-
-# 🧠 CONFIGURACIÓN DE ENTRENAMIENTO ML - OPTIMIZADO PARA >0.6 ACCURACY
 ml_training:
   training:
-    train_start: '2023-06-01'    # Entrenamiento: 01-Jun-2023 a 31-Dic-2024 (19 meses)
-    train_end: '2024-12-31'      # Fin período entrenamiento
-    val_start: '2025-01-01'      # Validación: 01-Ene-2025 a 01-Jun-2025 (5 meses)
-    val_end: '2025-06-01'        # Fin período validación
-    # 🔥 MEJORAS PARA >0.6 ACCURACY:
-    # - Más datos de entrenamiento (19 meses vs previos)
-    # - Validación separada temporalmente para evitar overfitting
-    # - Balanceo de clases automático en RandomForest
-    # - Features mejoradas: 48+ características vs 25 previas
-    # - Target más predictivo: movimientos significativos normalizados por ATR
+    train_start: "2023-01-01"
+    train_end: "2024-06-30"
+    val_start: "2024-07-01"
+    val_end: "2025-01-31"
+    min_samples: 1000
   optimization:
-    enabled: true                # ✅ HABILITADO - Ejecutar optimización
-    opt_start: '2024-06-01'      # Optimización: 01-Jun-2024 a 01-Jun-2025 (12 meses)
-    opt_end: '2025-06-01'        # Fin período optimización
-
-# 📊 CAMBIOS EN v4.8
-# ==================
-# - Migración completa a MT5 como proveedor principal
-# - Cambio de SOL/USDT a Volatility 75 Index (Deriv)
-# - Desactivación de CCXT (requiere cuenta real)
-# - Configuración específica para Volatility Indices
-# - Parámetros basados en backtest exitoso de SOL/USDT (1,591.2% ROI)
-# - Trading 24/7 sin interrupciones (ventaja sobre crypto)
-# - Spreads más bajos (0.05% vs 0.1%)
-# - Liquidez garantizada (mercado sintético)
+    enabled: true
+    opt_start: "2025-02-01"
+    opt_end: "2025-05-31"
+    n_trials: 100

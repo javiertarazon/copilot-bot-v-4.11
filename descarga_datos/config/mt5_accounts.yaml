@@ -1,44 +1,24 @@
-# 🏦 CONFIGURACIÓN DE CUENTAS MT5 DEMO
-# Archivo seguro para repositorio - Solo cuentas DEMO
-
-# Cuenta activa (se puede cambiar)
 active_account: "thinkmarkets"
 
-# Cuentas disponibles
 accounts:
-  icmarkets:
-    name: "ICMarkets Demo"
-    login: 52600804
-    password: "Yl$eFUMT0@P4Tq"
-    server: "ICMarketsSC-Demo"
-    broker: "ICMarkets"
-    account_type: "Demo Standard"
-    currency: "USD"
-    leverage: "1:500"
-    description: "Cuenta demo ICMarkets para trading forex y CFDs"
-    
   thinkmarkets:
     name: "ThinkMarkets Demo"
-    login: 175399
-    password: "Jatr28037#"
+    login: ""
+    password: ""
     server: "ThinkMarkets-Demo"
     broker: "ThinkMarkets"
     account_type: "Demo Standard"
     currency: "USD"
     leverage: "1:500"
-    description: "Cuenta demo ThinkMarkets para trading forex y CFDs"
+    description: "Perfil canónico demo para XAUUSD. Completar login y password en .env."
 
-# Configuración común MT5
 mt5_config:
   terminal_path: "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
   timeout: 30000
   enabled: true
-  
-# Rutas alternativas de instalación MT5
+
 mt5_paths:
   - "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
   - "C:\\Program Files (x86)\\MetaTrader 5\\terminal64.exe"
-  - "C:\\Program Files\\ICMarkets - MetaTrader 5\\terminal64.exe"
-  - "C:\\Program Files (x86)\\ICMarkets - MetaTrader 5\\terminal64.exe"
   - "C:\\Program Files\\ThinkMarkets - MetaTrader 5\\terminal64.exe"
   - "C:\\Program Files (x86)\\ThinkMarkets - MetaTrader 5\\terminal64.exe"

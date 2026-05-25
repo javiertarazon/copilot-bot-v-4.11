@@ -63,9 +63,9 @@ class MT5Config:
     login: int = 0
     password: str = ""
     timeout: int = 60000
-    default_symbol_list: List[str] = field(default_factory=lambda: ["EURUSD", "GBPUSD"])
-    default_timeframe: str = "1h"
-    timeframes: List[str] = field(default_factory=lambda: ["15m", "1h", "4h", "1d"])
+    default_symbol_list: List[str] = field(default_factory=lambda: ["XAUUSD"])
+    default_timeframe: str = "15m"
+    timeframes: List[str] = field(default_factory=lambda: ["15m"])
     start_date: str = "2024-01-01"
     end_date: str = "2024-12-31"
     use_real_volume: bool = True
@@ -73,7 +73,7 @@ class MT5Config:
 
 @dataclass
 class Config:
-    active_exchange: str = "bybit"
+    active_exchange: str = "mt5"
     exchanges: Dict[str, Dict[str, str]] = None
     default_symbols: List[str] = None
     data_types: List[str] = None
@@ -93,7 +93,7 @@ class Config:
         if self.exchanges is None:
             self.exchanges = {}
         if self.default_symbols is None:
-            self.default_symbols = ["BTC/USDT", "ETH/USDT"]
+            self.default_symbols = ["XAUUSD"]
         if self.data_types is None:
             self.data_types = ["ohlcv"]
     

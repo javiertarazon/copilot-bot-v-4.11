@@ -226,6 +226,44 @@ def validate_system(dashboard_only: bool = False, mode: str = 'backtest'):
         print(f" ERROR EN VALIDACIÓN: {e}")
         return False
 
+
+def show_validation_report() -> bool:
+    """
+    Muestra el estado de promoción del flujo canónico XAUUSD.
+    """
+    try:
+        config = load_config_from_yaml()
+        from validation.promotion_gate import build_validation_report, format_validation_report
+
+        report = build_validation_report(config)
+        print(format_validation_report(report))
+        return report["config_is_consistent"]
+    except Exception as e:
+        print(f"[ERROR] No se pudo generar reporte de validación: {e}")
+        return False
+
+
+def _enforce_live_validation_policy(config) -> bool:
+    """
+    Impone el gate de promoción antes de permitir demo/live.
+    """
+    from validation.promotion_gate import build_validation_report, format_validation_report
+
+    report = build_validation_report(config)
+    print(format_validation_report(report))
+
+    account_type = str(getattr(config.live_trading, "account_type", "DEMO")).upper()
+    if account_type == "REAL":
+        if not report["real_ready"]:
+            print(" [ERROR] Trading REAL bloqueado: falta completar validación o permiso explícito.")
+            return False
+    else:
+        if not report["demo_ready"]:
+            print(" [ERROR] Trading DEMO bloqueado: faltan entrenamiento, validación o prueba final.")
+            return False
+
+    return True
+
 async def verify_data_availability(config, symbols=None, timeframe=None, start_date=None, end_date=None):
     """
     FUNCIÓN CENTRALIZADA DE GESTIÓN DE DATOS - SISTEMA SIMPLIFICADO
@@ -246,8 +284,8 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
     # Soportar tanto objetos Config como diccionarios
     if isinstance(config, dict):
         backtest_config = config.get('backtesting', {})
-        symbols = symbols or backtest_config.get('symbols', ['BTC/USDT'])
-        timeframe = timeframe or backtest_config.get('timeframe', '4h')
+        symbols = symbols or backtest_config.get('symbols', ['XAUUSD'])
+        timeframe = timeframe or backtest_config.get('timeframe', '15m')
         start_date = start_date or backtest_config.get('start_date', '2024-01-01')
         end_date = end_date or backtest_config.get('end_date', '2024-12-31')
     else:
@@ -380,6 +418,9 @@ def run_live_mt5():
     else:
         print(" [OK] Live trading DESHABILITADO - Modo seguro")
 
+    if not _enforce_live_validation_policy(config):
+        return False
+
     try:
         from core.live_trading_orchestrator import run_live_trading
         print(" [START] Iniciando TRADING EN VIVO MT5 (cuenta demo)...")
@@ -430,6 +471,9 @@ def run_live_ccxt():
             print(" [OK] Cuenta configurada como DEMO - Modo seguro para pruebas")
     else:
         print(" [OK] Live trading DESHABILITADO - Modo seguro")
+
+    if not _enforce_live_validation_policy(config):
+        return False
 
     try:
         from core.ccxt_live_trading_orchestrator import run_crypto_live_trading
@@ -802,8 +846,8 @@ async def run_optimization_pipeline():
         # Este pipeline ya incluye descarga automática de datos
         from optimizacion.run_optimization_pipeline2 import OptimizationPipeline
         
-        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['SOL/USDT:USDT']
-        timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '4h'
+        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['XAUUSD']
+        timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '15m'
         
         print(f"\n[TARGET] Símbolos a procesar: {symbols}")
         print(f"⏰ Timeframe: {timeframe}")
@@ -960,27 +1004,9 @@ def show_symbol_selection():
         if hasattr(config.backtesting, 'symbol_selection'):
             symbol_selection = config.backtesting.symbol_selection
 
-            print("Criptomonedas CCXT:")
-            ccxt_symbols = ['SOL/USDT', 'ETH/USDT']
-            for symbol in ccxt_symbols:
-                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
-                print(f"  {status} {symbol}")
-
-            print("\nCriptomonedas MT5:")
-            mt5_crypto = ['BTC/USD', 'ADA/USD', 'DOT/USD', 'MATIC/USD', 'XRP/USD', 'LTC/USD', 'DOGE/USD']
-            for symbol in mt5_crypto:
-                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
-                print(f"  {status} {symbol}")
-
-            print("\nAcciones MT5:")
-            stocks = ['TSLA/US', 'NVDA/US', 'AAPL/US', 'MSFT/US', 'GOOGL/US', 'AMZN/US']
-            for symbol in stocks:
-                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
-                print(f"  {status} {symbol}")
-
-            print("\nForex MT5:")
-            forex = ['EUR/USD', 'USD/JPY', 'GBP/USD']
-            for symbol in forex:
+            print("Símbolos canónicos configurados:")
+            configured_symbols = config.backtesting.symbols or list(symbol_selection.keys())
+            for symbol in configured_symbols:
                 status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
                 print(f"  {status} {symbol}")
 
@@ -1176,6 +1202,7 @@ def main():
     parser.add_argument("--check-data-status", action="store_true", help="Verificar estado de datos disponibles sin descargar")
     parser.add_argument("--show-symbol-selection", action="store_true", help="Mostrar estado de selección de símbolos")
     parser.add_argument("--backtest-selective", action="store_true", help="Ejecutar backtesting solo con símbolos seleccionados")
+    parser.add_argument("--validation-report", action="store_true", help="Mostrar estado de promoción a demo/real")
 
     args = parser.parse_args()
 
@@ -1205,6 +1232,10 @@ def main():
             print("  VALIDACIÓN OMITIDA")
         elif args.data_audit:
             print("  VALIDACIÓN OMITIDA (modo auditoría de datos)")
+
+    if args.validation_report:
+        success = show_validation_report()
+        sys.exit(0 if success else 1)
 
     # 2. EJECUTAR OPERACIONES SEGÚN MODO
     if mode == "test_live_mt5":

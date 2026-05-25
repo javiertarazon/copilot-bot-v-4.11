@@ -1,223 +1,81 @@
-# 🤖 Bot Trader Copilot v5.1 - Sistema Multi-Cuenta MT5
+# Bot Trader Copilot v4.11 canónico
 
-**Versión:** 5.1 | **Fecha:** 31 de enero de 2026 | **Estado:** ✅ SISTEMA MULTI-CUENTA OPERATIVO
+Repositorio consolidado para un único bot, un único activo y un único flujo operativo:
 
-Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning. **Ahora con sistema multi-cuenta MT5 (ThinkMarkets + ICMarkets) y auditoría técnica completa.**
+- **Motor base:** `copilot-bot-v-4.11`
+- **Activo canónico:** `XAUUSD`
+- **Estrategia inicial:** `UltraDetailedHeikinAshiML`
+- **Broker objetivo:** MT5 demo compatible (`ThinkMarkets-Demo` por defecto)
+- **Timeframe único:** `15m`
 
----
+## Objetivo del repositorio
 
-## 🎯 NOVEDADES v5.1
+Este repositorio deja de ser multi-versión y multi-activo. La operación oficial es:
 
-### 🏦 Sistema Multi-Cuenta Demo
-- **ThinkMarkets Demo** (Principal): Login 175399, Server: ThinkMarkets-Demo
-- **ICMarkets Demo** (Backup): Login 52600804, Server: ICMarketsSC-Demo
-- **Cambio automático** entre cuentas sin edición manual
-- **Gestión centralizada** con scripts de diagnóstico integrados
+1. entrenar
+2. validar
+3. ejecutar prueba final
+4. pasar a sandbox/demo
+5. decidir si se promueve a real
 
-### 🔍 Auditoría Técnica Exhaustiva
-- **543 archivos** analizados en profundidad
-- **11 problemas** identificados y priorizados (3 críticos, 4 importantes, 4 mejoras)
-- **Plan de acción** estructurado en 3 fases
-- **Documentación integral** con reglas de operación establecidas
+## Configuración canónica
 
-### 📚 Documentación Nueva
-- `INSTRUCCIONES_PRIORITARIAS.md` - Reglas fundamentales del sistema
-- `AUDITORIA_TECNICA_COMPLETA.md` - Análisis técnico de 800+ líneas
-- `GUIA_CUENTAS_MT5.md` - Gestión completa de cuentas demo
-- `CHANGELOG_v5.1.md` - Cambios detallados de esta versión
+Archivo principal:
 
----
+- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/config/config.yaml`
 
-## 🚀 INICIO RÁPIDO v5.1
+Variables sensibles:
 
-### 1. Gestión de Cuentas MT5
+- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/.env.example`
+
+Las credenciales MT5 ya no se guardan en documentación ni en YAML operativo. Deben venir desde variables de entorno:
+
 ```bash
-# Ver cuentas disponibles
-python utils/mt5_account_manager.py
-
-# Cambiar a ThinkMarkets (recomendado)
-python utils/mt5_account_manager.py thinkmarkets
-
-# Cambiar a ICMarkets (alternativa)
-python utils/mt5_account_manager.py icmarkets
-
-# Verificar instalación MT5
-python tests/verificar_mt5_instalacion.py
+MT5_LOGIN=
+MT5_PASSWORD=
+MT5_SERVER=ThinkMarkets-Demo
+MT5_PATH=
 ```
 
-### 2. Configuración MT5
-1. **Descargar MT5**: [ThinkMarkets](https://www.thinkmarkets.com/en/trading-platforms/metatrader-5/) o [ICMarkets](https://www.icmarkets.com/global/en/metatrader-5)
-2. **Instalar y abrir MT5**
-3. **Conectar** con credenciales mostradas por el gestor de cuentas
-4. **Habilitar AutoTrading**: Tools → Options → Expert Advisors → Allow automated trading
-5. **Verificar**: `python tests/diagnose_simple.py` (debe mostrar "Trading permitido: True ✅")
+## Comandos oficiales
 
-### 3. Ejecución del Sistema
 ```bash
-# Backtest (validado: 79.9% win rate, 7,896 trades)
-python main.py --backtest
+# Crear entorno
+python3 -m venv /tmp/workspace/javiertarazon/copilot-bot-v-4.11/.venv
+. /tmp/workspace/javiertarazon/copilot-bot-v-4.11/.venv/bin/activate
+pip install -r /tmp/workspace/javiertarazon/copilot-bot-v-4.11/requirements.txt
 
-# Live Trading MT5
-python main.py --live-mt5
+# Entrenamiento
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --train-ml
 
-# Optimización ML (opcional)
-python main.py --optimize
-```
-   • SOLUCION_ERROR_10027.md (técnica y solución)
-   • RESUMEN_VISUAL_ERROR_10027.md (antes/después)
-   • Diagnósticos automáticos en tests/
+# Backtest / prueba final offline
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --backtest-only
 
-✅ Scripts de Validación
-   • diagnose_simple.py → Verifica estado MT5
-   • enable_autotrading.py → Muestra instrucciones
-   • wait_for_autotrading.py → Espera e inicia automático
-```
+# Reporte de promoción
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --validation-report
 
-### 🎉 **VALIDACIÓN COMPLETADA - 3 DE NOVIEMBRE**
-
-### ✅ **Backtesting Exitoso**
-```
-📊 Resultados del Backtesting:
-   • Operaciones ejecutadas:      7,896 trades
-   • P&L Total:                   $5,272.97 (627% return) ✅
-   • Win Rate:                    79.9% ✅ EXCELENTE
-   • Risk/Reward:                 1:2.50 ✅ PERFECTO
-   • Errores detectados:          0 ✅ CERO
+# Sandbox / demo en vivo
+python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --live-mt5
 ```
 
-### ✅ **Live MT5 - OPERATIVO 24/7**
-```
-🟢 Sistema Completamente Operativo
-   • AutoTrading habilitado en MT5
-   • Ciclos ejecutándose cada 5 segundos
-   • Señales generando 45+ diarias
-   • Órdenes ejecutando automáticamente
-   • TP/SL correctos (1075.70 / 430.28 pts)
-   • Position tracking en tiempo real
-   • P&L actualizado constantemente
-```
+## Regla de promoción
 
-### ✅ **Dashboard Ejecutándose**
-```
-🟢 Dashboard en http://localhost:8520
-   • Métricas principales visibles
-   • Posiciones abiertas
-   • Histórico de trades
-   • P&L tracking
-```
+- **Demo** requiere: entrenamiento + validación + prueba final.
+- **Real** requiere: entrenamiento + validación + prueba final + sandbox/demo + permiso explícito.
 
----
+La política está documentada en:
 
-## 🎯 **INICIO RÁPIDO v4.9 - LIVE MT5**
+- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/docs/VALIDACION_XAUUSD.md`
 
-### 📋 **Requisitos Previos**
+## Estado de limpieza
 
-1. **MetaTrader 5 Instalado**
-   ```
-   Descargar: https://deriv.com
-   Versión: 5.x o superior
-   Plataforma: Demo o Real
-   ```
+- Se eliminaron documentos raíz redundantes de v4.9/v5.1.
+- Se eliminaron configuraciones históricas duplicadas.
+- `descarga_datos/ARCHIVOS MD/` queda como **archivo histórico** y no forma parte del flujo canónico.
 
-2. **AutoTrading Habilitado (CRÍTICO)**
-   ```
-   En MT5:
-   1. Tools → Options → Expert Advisors
-   2. ☑ Allow automated trading
-   3. ☑ Allow DLL imports
-   4. Click OK
-   5. Reinicia MT5
-   ```
+## Nota operativa
 
-3. **Credenciales en .env**
-   ```
-   MT5_LOGIN=5899273
-   MT5_PASSWORD=Jatr280371$
-   MT5_SERVER=Deriv-Demo
-   ```
-
-### 🚀 **Ejecutar Sistema Live (24/7)**
-
-```powershell
-# Terminal 1: Instalar dependencias (primera vez)
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-
-# Terminal 1: Ejecutar sistema
-python descarga_datos/main.py --live-mt5
-
-# Terminal 2 (opcional): Monitorear logs
-Get-Content descarga_datos/logs/live_trading.log -Wait
-```
-
-### 🔧 **Si hay errores - Diagnóstico**
-
-```powershell
-# Verificar estado de MT5
-python descarga_datos/tests/diagnose_simple.py
-
-# Debe mostrar: Trading permitido: True ✅
-
-# Si dice False:
-python descarga_datos/tests/enable_autotrading.py
-# Luego sigue instrucciones en MT5
-```
-
----
-
-## ⚠️ **Solución de Problemas - v4.9**
-
-### Error 10027 - "Total de posiciones abiertas excedido"
-
-**Síntoma**: Sistema no ejecuta órdenes  
-**Causa**: AutoTrading deshabilitado en MT5  
-**Solución**:
-1. Abre MT5
-2. Tools → Options → Expert Advisors
-3. ☑ Mark "Allow automated trading"
-4. Reinicia MT5 completamente
-5. Ver: [`GUIA_PASO_A_PASO_ERROR_10027.md`](descarga_datos/ARCHIVOS%20MD/GUIA_PASO_A_PASO_ERROR_10027.md)
-
-### Otros Errores
-
-Ver documentación completa en: [`SOLUCION_ERROR_10027.md`](descarga_datos/ARCHIVOS%20MD/SOLUCION_ERROR_10027.md)
-
----
-
-## 📚 **Documentación v4.9**
-
-### 🔴 **CRÍTICO - Leer Primero**
-- [`ACCION_INMEDIATA.txt`](ACCION_INMEDIATA.txt) - Resumen 30 segundos
-- [`GUIA_PASO_A_PASO_ERROR_10027.md`](descarga_datos/ARCHIVOS%20MD/GUIA_PASO_A_PASO_ERROR_10027.md) - 9 pasos detallados
-- [`CHANGELOG_v4.9.md`](descarga_datos/ARCHIVOS%20MD/CHANGELOG_v4.9.md) - Cambios de esta versión
-
-### 📖 **Referencia Técnica**
-- [`SOLUCION_ERROR_10027.md`](descarga_datos/ARCHIVOS%20MD/SOLUCION_ERROR_10027.md) - Explicación técnica
-- [`RESUMEN_VISUAL_ERROR_10027.md`](descarga_datos/ARCHIVOS%20MD/RESUMEN_VISUAL_ERROR_10027.md) - Comparativa antes/después
-
-### 🔧 **Diagnóstico**
-- `descarga_datos/tests/diagnose_simple.py` - Diagnóstico rápido
-- `descarga_datos/tests/enable_autotrading.py` - Mostrar instrucciones
-- `descarga_datos/tests/wait_for_autotrading.py` - Espera e inicia automático
-
----
-
-### ✅ **Backtesting Exitoso**
-```
-📊 Resultados del Backtesting:
-   • Operaciones ejecutadas:      2,962 trades
-   • P&L Total:                   $13,529.74 ✅ POSITIVO
-   • Win Rate:                    79.4% ✅ EXCELENTE
-   • Errores detectados:          0 ✅ CERO
-   • Posiciones fantasma:         0 ✅ CERO
-   • Comisiones:                  Calculadas correctamente
-   • Trailing Stops:              100% funcional
-```
-
-### ✅ **Dashboard Ejecutándose**
-```
-🟢 Dashboard en http://localhost:8520
+Si `--live-mt5` falla por validación, actualiza primero el bloque `live_trading.validation` del archivo de configuración para reflejar las etapas ya completadas.
    • Métricas principales visibles
    • Sistema completamente funcional
    • UI cargando correctamente

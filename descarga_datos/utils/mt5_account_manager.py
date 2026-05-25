@@ -1,6 +1,5 @@
 """
-Gestor de Cuentas MT5 Demo
-Permite cambiar entre diferentes cuentas demo fácilmente
+Gestor de cuenta MT5 demo canónica.
 """
 import yaml
 import os
@@ -43,9 +42,11 @@ class MT5AccountManager:
         
         account = self.config['accounts'][account_id]
         
-        # Actualizar .env
-        set_key(self.env_path, "MT5_LOGIN", str(account['login']))
-        set_key(self.env_path, "MT5_PASSWORD", account['password'])
+        # Actualizar .env sin persistir secretos en el repositorio
+        if str(account.get('login', '')).strip():
+            set_key(self.env_path, "MT5_LOGIN", str(account['login']))
+        if str(account.get('password', '')).strip():
+            set_key(self.env_path, "MT5_PASSWORD", account['password'])
         set_key(self.env_path, "MT5_SERVER", account['server'])
         
         # Actualizar cuenta activa en config
@@ -54,11 +55,11 @@ class MT5AccountManager:
             yaml.dump(self.config, file, default_flow_style=False, allow_unicode=True)
         
         print(f"✅ Cambiado a cuenta: {account['name']}")
-        print(f"   Login: {account['login']}")
         print(f"   Servidor: {account['server']}")
+        print("   Login/password: configurarlos manualmente en descarga_datos/.env")
         print(f"\n📋 PRÓXIMOS PASOS:")
-        print(f"1. Abrir MT5 y conectar a {account['server']}")
-        print(f"2. Usar login: {account['login']}")
+        print(f"1. Completar MT5_LOGIN y MT5_PASSWORD en {self.env_path}")
+        print(f"2. Abrir MT5 y conectar a {account['server']}")
         print(f"3. Habilitar AutoTrading")
         print(f"4. Ejecutar: python tests/diagnose_simple.py")
         
@@ -83,7 +84,6 @@ class MT5AccountManager:
         
         print("\n🚨 MT5 NO INSTALADO")
         print("📥 Descargar desde:")
-        print("   - ICMarkets: https://www.icmarkets.com/global/en/metatrader-5")
         print("   - ThinkMarkets: https://www.thinkmarkets.com/en/trading-platforms/metatrader-5/")
         return None
 
@@ -96,19 +96,19 @@ def main():
     if len(sys.argv) == 1:
         # Sin argumentos, mostrar cuentas
         manager.list_accounts()
-        print(f"\n💡 Uso: python {sys.argv[0]} [icmarkets|thinkmarkets|verify]")
+        print(f"\n💡 Uso: python {sys.argv[0]} [thinkmarkets|verify]")
         
     elif sys.argv[1] == "verify":
         # Verificar instalación
         manager.verify_installation()
         
-    elif sys.argv[1] in ["icmarkets", "thinkmarkets"]:
+    elif sys.argv[1] in ["thinkmarkets"]:
         # Cambiar cuenta
         manager.switch_account(sys.argv[1])
         
     else:
         print(f"❌ Cuenta '{sys.argv[1]}' no válida")
-        print("✅ Cuentas disponibles: icmarkets, thinkmarkets")
+        print("✅ Cuentas disponibles: thinkmarkets")
 
 if __name__ == "__main__":
     main()

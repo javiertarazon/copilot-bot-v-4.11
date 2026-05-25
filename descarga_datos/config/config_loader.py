@@ -31,8 +31,8 @@ class MT5Config:
 
 @dataclass
 class BacktestingConfig:
-    symbols: List[str] = field(default_factory=list)
-    timeframe: str = "1h"
+    symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
+    timeframe: str = "15m"
     start_date: str = "2024-01-01"
     end_date: str = "2024-06-01"
     initial_capital: float = 10000.0
@@ -148,8 +148,8 @@ class LiveTradingConfig:
     enabled: bool = False
     mode: str = "MT5"  # "MT5" o "CCXT"
     account_type: str = "DEMO"  # "DEMO" o "REAL"
-    active_symbol: str = "BTC/USDT"
-    active_strategy: str = "Solana4HRiskManaged"
+    active_symbol: str = "XAUUSD"
+    active_strategy: str = "UltraDetailedHeikinAshiML"
     risk_per_trade: float = 0.01
     max_positions: int = 5
     max_positions_per_symbol: int = 1
@@ -160,8 +160,8 @@ class LiveTradingConfig:
     strategy_mapping: Dict[str, Any] = field(default_factory=dict)
 
     # Configuración específica por modo
-    mt5_symbols: List[str] = field(default_factory=lambda: ["EURUSD", "USDJPY", "XAUUSD"])
-    mt5_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h", "1d"])
+    mt5_symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
+    mt5_timeframes: List[str] = field(default_factory=lambda: ["15m"])
     ccxt_exchange: str = "bybit"
     ccxt_symbols: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     ccxt_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h"])
@@ -453,6 +453,24 @@ def _inject_env_credentials(config: Config) -> None:
             config.exchanges['bybit'].api_key = bybit_key
         if bybit_secret:
             config.exchanges['bybit'].api_secret = bybit_secret
+
+    # Inyectar credenciales MT5
+    mt5_login = os.getenv('MT5_LOGIN', '').strip()
+    mt5_password = os.getenv('MT5_PASSWORD', '').strip()
+    mt5_server = os.getenv('MT5_SERVER', '').strip()
+    mt5_path = os.getenv('MT5_PATH', '').strip()
+
+    if mt5_login:
+        try:
+            config.mt5.login = int(mt5_login)
+        except ValueError:
+            pass
+    if mt5_password:
+        config.mt5.password = mt5_password
+    if mt5_server:
+        config.mt5.server = mt5_server
+    if mt5_path:
+        config.mt5.terminal_path = mt5_path
 
 
 def save_config_to_yaml(config: Config, config_path: Optional[str] = None) -> None:
