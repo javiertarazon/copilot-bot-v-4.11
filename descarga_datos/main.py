@@ -717,7 +717,8 @@ async def run_backtest():
                 print(f"\n[BACKTEST] 📆 Ejecutando periodo {index}/{len(backtest_periods)}: {period['name']}")
                 print(f"[BACKTEST] 📅 Rango: {period['start_date']} → {period['end_date']}")
 
-            period_config = copy.deepcopy(config)
+            period_config = copy.copy(config)
+            period_config.backtesting = copy.copy(config.backtesting)
             period_config.backtesting.start_date = period["start_date"]
             period_config.backtesting.end_date = period["end_date"]
             period_config.backtesting.active_period_name = period["name"]
@@ -735,6 +736,8 @@ async def run_backtest():
             results_dir.mkdir(parents=True, exist_ok=True)
             combined_summary = build_multi_period_summary(period_summaries)
             with open(results_dir / "global_summary.json", "w", encoding="utf-8") as summary_file:
+                json.dump(combined_summary, summary_file, indent=2, ensure_ascii=False)
+            with open(results_dir / "multi_period_summary.json", "w", encoding="utf-8") as summary_file:
                 json.dump(combined_summary, summary_file, indent=2, ensure_ascii=False)
             print(
                 f"[OK] Resumen multi-periodo generado: "

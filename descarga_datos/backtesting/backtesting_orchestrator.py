@@ -137,6 +137,8 @@ async def run_full_backtesting_with_batches(config_override=None):
 
     try:
         # Cargar configuración
+        # config_override permite reutilizar el orquestador para periodos específicos
+        # sin mutar el archivo YAML canónico.
         config = config_override or load_config_from_yaml()
         print(f"[BACKTEST] ✅ Config cargada: {config.backtesting.start_date} a {config.backtesting.end_date}")
         print(f"[BACKTEST] 📊 Timeframe: {config.backtesting.timeframe}")

@@ -42,7 +42,9 @@ def normalize_backtest_periods(backtesting_config: Any) -> List[Dict[str, str]]:
         parsed_end = _parse_date(end_date)
         if parsed_end < parsed_start:
             raise ValueError(
-                f"Periodo de backtest inválido en posición {index}: end_date no puede ser menor que start_date"
+                f"Periodo de backtest inválido en posición {index}: "
+                f"end_date ({parsed_end.strftime('%Y-%m-%d')}) no puede ser menor que "
+                f"start_date ({parsed_start.strftime('%Y-%m-%d')})"
             )
 
         normalized.append(
