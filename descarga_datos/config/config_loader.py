@@ -36,6 +36,7 @@ class BacktestingConfig:
     timeframe: str = CANONICAL_TIMEFRAME
     start_date: str = "2019-01-01"
     end_date: str = "2019-12-31"
+    periods: List[Dict[str, str]] = field(default_factory=list)
     initial_capital: float = 10000.0
     commission: float = 0.1
     slippage: float = 0.05
@@ -519,6 +520,7 @@ def save_config_to_yaml(config: Config, config_path: Optional[str] = None) -> No
             "timeframe": config.backtesting.timeframe,
             "start_date": config.backtesting.start_date,
             "end_date": config.backtesting.end_date,
+            "periods": config.backtesting.periods,
             "initial_capital": config.backtesting.initial_capital,
             "commission": config.backtesting.commission,
             "slippage": config.backtesting.slippage,

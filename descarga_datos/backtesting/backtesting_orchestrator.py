@@ -6,6 +6,7 @@ Contiene toda la lógica de backtesting, carga dinámica de estrategias y ejecuc
 import asyncio
 import os
 import sys
+from datetime import datetime, timezone
 # Evitar side-effects durante import: no ejecutar prints al importar el módulo.
 # Añadir rutas al path solo si no están ya presentes
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +21,7 @@ from core.downloader import AdvancedDataDownloader
 # NOTA: Evitamos imports ansiosos de estrategias para reducir tiempo/bloqueos en validación inicial.
 # Las estrategias se importan dinámicamente en load_strategies_from_config() usando __import__.
 from backtesting.backtester import AdvancedBacktester
+from backtesting.period_utils import build_period_summary
 from utils.logger import setup_logging, get_logger
 import pandas as pd
 
@@ -118,13 +120,24 @@ def load_strategies_from_config(config):
 
     return strategies
 
-async def run_full_backtesting_with_batches():
+
+def _create_run_summary(config, backtest_results, total_trades_global, total_pnl, avg_win_rate):
+    return build_period_summary(
+        config=config,
+        total_symbols=len(backtest_results),
+        total_pnl=total_pnl,
+        total_trades=total_trades_global,
+        avg_win_rate=avg_win_rate,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+async def run_full_backtesting_with_batches(config_override=None):
     print("[BACKTEST] 🚀 BACKTESTING COMPLETO CON DESCARGAS POR LOTES")
     print("=" * 70)
 
     try:
         # Cargar configuración
-        config = load_config_from_yaml()
+        config = config_override or load_config_from_yaml()
         print(f"[BACKTEST] ✅ Config cargada: {config.backtesting.start_date} a {config.backtesting.end_date}")
         print(f"[BACKTEST] 📊 Timeframe: {config.backtesting.timeframe}")
         print(f"[BACKTEST] 🎯 Símbolos: {config.backtesting.symbols}")
@@ -178,7 +191,7 @@ async def run_full_backtesting_with_batches():
 
             if not data_available:
                 print("[BACKTEST] ❌ No hay datos suficientes disponibles y downloader falló")
-                return
+                return None
             else:
                 print("[BACKTEST] ✅ Usando datos existentes - continuando sin downloader")
                 # Continuar con datos existentes
@@ -221,14 +234,14 @@ async def run_full_backtesting_with_batches():
             )
         except asyncio.CancelledError:
             print("[BACKTEST] ❌ Descarga cancelada")
-            return
+            return None
         except Exception as e:
             print(f"[BACKTEST] ❌ Error descargando datos: {e}")
-            return
+            return None
 
         if not symbol_data:
             print("[BACKTEST] ❌ No se pudieron descargar datos")
-            return
+            return None
 
         downloaded_count = len([s for s in active_symbols if s in symbol_data and symbol_data[s] is not None])
         print(f"[BACKTEST] ✅ Datos descargados: {downloaded_count}/{len(active_symbols)} símbolos")
@@ -265,7 +278,7 @@ async def run_full_backtesting_with_batches():
 
         if not processed_symbol_data:
             print("[BACKTEST] ❌ Error procesando datos")
-            return
+            return None
 
         print(f"[BACKTEST] ✅ Datos procesados para {len(processed_symbol_data)} símbolos")
 
@@ -277,7 +290,7 @@ async def run_full_backtesting_with_batches():
         active_strategies = load_strategies_from_config(config)
         if not active_strategies:
             print("[BACKTEST] ❌ ERROR: No hay estrategias activas configuradas")
-            return
+            return None
 
         print(f"[BACKTEST] 🎯 Estrategias activas cargadas: {list(active_strategies.keys())}")
 
@@ -407,6 +420,13 @@ async def run_full_backtesting_with_batches():
             # Estadísticas generales
             total_pnl = sum(r['pnl'] for r in all_results)
             avg_win_rate = (sum(r['win_rate'] for r in all_results) / len(all_results)) if all_results else 0
+            summary = _create_run_summary(
+                config=config,
+                backtest_results=backtest_results,
+                total_trades_global=total_trades_global,
+                total_pnl=total_pnl,
+                avg_win_rate=avg_win_rate,
+            )
             # Guardar resultados para dashboard
             try:
                 import json
@@ -452,20 +472,6 @@ async def run_full_backtesting_with_batches():
 
                     with open(file_path, 'w', encoding='utf-8') as f:
                         json.dump({'symbol': symbol, 'strategies': strategies_native}, f, indent=2, ensure_ascii=False)
-                # Resumen global
-                summary = {
-                    'total_symbols': len(backtest_results),
-                    'period': {
-                        'start_date': config.backtesting.start_date,
-                        'end_date': config.backtesting.end_date,
-                        'timeframe': config.backtesting.timeframe
-                    },
-                    'metrics': {
-                        'total_pnl': total_pnl,
-                        'total_trades': total_trades_global,
-                        'avg_win_rate': avg_win_rate
-                    }
-                }
                 with open(out_dir / 'global_summary.json', 'w', encoding='utf-8') as f:
                     json.dump(summary, f, indent=2, ensure_ascii=False)
                 print(f"[BACKTEST] ✅ Resultados guardados para dashboard en {out_dir}")
@@ -481,11 +487,13 @@ async def run_full_backtesting_with_batches():
 
         await downloader.shutdown()
         print("[BACKTEST] ✅ Backtesting completado exitosamente con descargas por lotes")
+        return summary if backtest_results else None
 
     except Exception as e:
         print(f"[BACKTEST] ❌ Error general: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
 async def save_backtest_results(backtest_results, config):
     """
@@ -578,6 +586,25 @@ async def save_backtest_results(backtest_results, config):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump({'symbol': symbol, 'strategies': strategies_native}, f, indent=2, ensure_ascii=False)
 
+        total_trades = 0
+        total_pnl = 0.0
+        win_rates = []
+        for strategies in backtest_results.values():
+            for result in strategies.values():
+                total_trades += int(result.get("total_trades", 0))
+                total_pnl += float(result.get("total_pnl", 0))
+                win_rates.append(float(result.get("win_rate", 0)) * 100)
+
+        summary = _create_run_summary(
+            config=config,
+            backtest_results=backtest_results,
+            total_trades_global=total_trades,
+            total_pnl=total_pnl,
+            avg_win_rate=(sum(win_rates) / len(win_rates)) if win_rates else 0.0,
+        )
+        with open(out_dir / 'global_summary.json', 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
         print(f"[BACKTEST] ✅ Resultados guardados en {out_dir}")
 
     except Exception as e:
@@ -635,7 +662,7 @@ async def run_backtest_with_existing_data(config):
 
         if not processed_symbol_data:
             print("[BACKTEST] ❌ No se pudieron cargar datos para ningún símbolo")
-            return
+            return None
 
         print(f"[BACKTEST] 📊 Datos cargados: {len(processed_symbol_data)} símbolos, {total_velas:,} velas totales")
 
@@ -646,7 +673,7 @@ async def run_backtest_with_existing_data(config):
         active_strategies = load_strategies_from_config(config)
         if not active_strategies:
             print("[BACKTEST] ❌ ERROR: No hay estrategias activas configuradas")
-            return
+            return None
 
         print(f"[BACKTEST] 🎯 Estrategias activas: {list(active_strategies.keys())}")
 
@@ -736,11 +763,31 @@ async def run_backtest_with_existing_data(config):
             print(f"[BACKTEST] 📊 Para ver resultados: python main.py --dashboard-only")
 
         print("[BACKTEST] ✅ Backtesting completado exitosamente con datos existentes")
+        if backtest_results:
+            total_pnl = sum(
+                float(result.get("total_pnl", 0))
+                for strategies in backtest_results.values()
+                for result in strategies.values()
+            )
+            win_rates = [
+                float(result.get("win_rate", 0)) * 100
+                for strategies in backtest_results.values()
+                for result in strategies.values()
+            ]
+            return _create_run_summary(
+                config=config,
+                backtest_results=backtest_results,
+                total_trades_global=total_trades_global,
+                total_pnl=total_pnl,
+                avg_win_rate=(sum(win_rates) / len(win_rates)) if win_rates else 0.0,
+            )
+        return None
 
     except Exception as e:
         print(f"[BACKTEST] ❌ Error general: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
 if __name__ == "__main__":
     # Ejecutar backtest completo

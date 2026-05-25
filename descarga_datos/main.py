@@ -23,6 +23,7 @@ ARQUITECTURA:
 """
 import argparse
 import asyncio
+import copy
 import os
 import sys
 import subprocess
@@ -115,6 +116,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from config.config_loader import load_config_from_yaml
+from backtesting.period_utils import (
+    build_multi_period_summary,
+    get_combined_period_range,
+    normalize_backtest_periods,
+)
 from utils.logger import initialize_system_logging, setup_logging, get_logger
 from utils.logger_metrics import log_execution_time, log_system_status, log_batch_operation
 from utils.graceful_shutdown import GracefulShutdownHandler, SafeTrading
@@ -631,6 +637,8 @@ async def run_backtest():
     try:
         # PASO 1: Cargar configuración centralizada
         config = load_config_from_yaml()
+        backtest_periods = normalize_backtest_periods(config.backtesting)
+        combined_start_date, combined_end_date = get_combined_period_range(config.backtesting)
         print("[OK] Configuración centralizada cargada")
         
         # LOGGING COMPARATIVO: Mostrar configuraciones clave para comparación con live
@@ -639,6 +647,9 @@ async def run_backtest():
         print(f"   Timeframe: {config.backtesting.timeframe}")
         print(f"   Símbolos: {config.backtesting.symbols}")
         print(f"   Período: {config.backtesting.start_date} → {config.backtesting.end_date}")
+        if len(backtest_periods) > 1:
+            print(f"   Periodos configurados: {len(backtest_periods)}")
+            print(f"   Rango consolidado: {combined_start_date} → {combined_end_date}")
         if hasattr(config, 'live_trading'):
             print(f" [CONFIG] Comparación con Live:")
             print(f"   Live timeframes: {config.live_trading.ccxt_timeframes}")
@@ -665,7 +676,13 @@ async def run_backtest():
             
         timeframe_override = override_timeframe if override_timeframe else None
         
-        data_status = await verify_data_availability(config, symbols=symbols_override, timeframe=timeframe_override)
+        data_status = await verify_data_availability(
+            config,
+            symbols=symbols_override,
+            timeframe=timeframe_override,
+            start_date=combined_start_date,
+            end_date=combined_end_date,
+        )
         
         # Validar que tengamos datos para al menos un símbolo
         available_symbols = [symbol for symbol, status in data_status.items() if status['status'] == 'ok']
@@ -693,8 +710,37 @@ async def run_backtest():
             print(" Cargando orquestador de backtesting...")
             from backtesting.backtesting_orchestrator import run_full_backtesting_with_batches
             print(" Iniciando backtesting con datos centralizados...")
-        
-        await run_full_backtesting_with_batches()
+
+        period_summaries = []
+        for index, period in enumerate(backtest_periods, start=1):
+            if len(backtest_periods) > 1:
+                print(f"\n[BACKTEST] 📆 Ejecutando periodo {index}/{len(backtest_periods)}: {period['name']}")
+                print(f"[BACKTEST] 📅 Rango: {period['start_date']} → {period['end_date']}")
+
+            period_config = copy.deepcopy(config)
+            period_config.backtesting.start_date = period["start_date"]
+            period_config.backtesting.end_date = period["end_date"]
+            period_config.backtesting.active_period_name = period["name"]
+
+            summary = await run_full_backtesting_with_batches(config_override=period_config)
+            if summary:
+                period_summaries.append(summary)
+
+        if not period_summaries:
+            print("[ERROR] No se generaron resultados de backtesting")
+            return False
+
+        if len(period_summaries) > 1:
+            results_dir = Path(__file__).parent / "data" / "dashboard_results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            combined_summary = build_multi_period_summary(period_summaries)
+            with open(results_dir / "global_summary.json", "w", encoding="utf-8") as summary_file:
+                json.dump(combined_summary, summary_file, indent=2, ensure_ascii=False)
+            print(
+                f"[OK] Resumen multi-periodo generado: "
+                f"{combined_summary['consistency']['profitable_periods']}/{combined_summary['consistency']['periods_tested']} periodos positivos"
+            )
+
         print("[OK] Backtesting completado exitosamente")
         return True
     except KeyboardInterrupt:

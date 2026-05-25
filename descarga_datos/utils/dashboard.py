@@ -538,9 +538,13 @@ if results:
         )
     
     with col4:
+        period_summary = (global_summary or {}).get("period", {})
+        period_label = "N/A"
+        if period_summary:
+            period_label = f"{period_summary.get('start_date', 'N/A')} a {period_summary.get('end_date', 'N/A')}"
         st.metric(
             "Período",
-            "2024-06-01 a 2025-10-24"
+            period_label
         )
     
     st.markdown("---")
