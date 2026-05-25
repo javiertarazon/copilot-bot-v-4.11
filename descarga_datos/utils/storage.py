@@ -12,11 +12,22 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-MIN_VALID_TS = int(pd.Timestamp('1970-01-01').timestamp())
+MIN_VALID_TS = int(pd.Timestamp('1980-01-01').timestamp())
 MAX_VALID_TS = int(pd.Timestamp('2050-01-01').timestamp())
 
 def _normalize_timestamp_series(series: pd.Series) -> pd.Series:
     """Normaliza timestamps a segundos Unix."""
+    if pd.api.types.is_datetime64_any_dtype(series) or pd.api.types.is_datetime64tz_dtype(series):
+        numeric = pd.to_numeric(pd.to_datetime(series, errors='coerce'), errors='coerce')
+        max_abs = numeric.dropna().abs().max() if not numeric.dropna().empty else 0
+        if max_abs > 10**17:
+            numeric = numeric // 10**9  # nanosegundos -> segundos
+        elif max_abs > 10**14:
+            numeric = numeric // 10**6  # microsegundos -> segundos
+        elif max_abs > 10**11:
+            numeric = numeric // 10**3  # milisegundos -> segundos
+        return numeric.astype('Int64')
+
     if pd.api.types.is_numeric_dtype(series):
         numeric = pd.to_numeric(series, errors='coerce')
         max_abs = numeric.dropna().abs().max() if not numeric.dropna().empty else 0
