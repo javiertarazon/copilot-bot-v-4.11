@@ -8,6 +8,7 @@ import os
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from pathlib import Path
+from config.canonical_defaults import CANONICAL_STRATEGY, CANONICAL_SYMBOL, CANONICAL_TIMEFRAME
 
 
 @dataclass
@@ -31,8 +32,8 @@ class MT5Config:
 
 @dataclass
 class BacktestingConfig:
-    symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
-    timeframe: str = "15m"
+    symbols: List[str] = field(default_factory=lambda: [CANONICAL_SYMBOL])
+    timeframe: str = CANONICAL_TIMEFRAME
     start_date: str = "2024-01-01"
     end_date: str = "2024-06-01"
     initial_capital: float = 10000.0
@@ -148,8 +149,8 @@ class LiveTradingConfig:
     enabled: bool = False
     mode: str = "MT5"  # "MT5" o "CCXT"
     account_type: str = "DEMO"  # "DEMO" o "REAL"
-    active_symbol: str = "XAUUSD"
-    active_strategy: str = "UltraDetailedHeikinAshiML"
+    active_symbol: str = CANONICAL_SYMBOL
+    active_strategy: str = CANONICAL_STRATEGY
     risk_per_trade: float = 0.01
     max_positions: int = 5
     max_positions_per_symbol: int = 1
@@ -160,8 +161,8 @@ class LiveTradingConfig:
     strategy_mapping: Dict[str, Any] = field(default_factory=dict)
 
     # Configuración específica por modo
-    mt5_symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
-    mt5_timeframes: List[str] = field(default_factory=lambda: ["15m"])
+    mt5_symbols: List[str] = field(default_factory=lambda: [CANONICAL_SYMBOL])
+    mt5_timeframes: List[str] = field(default_factory=lambda: [CANONICAL_TIMEFRAME])
     ccxt_exchange: str = "bybit"
     ccxt_symbols: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     ccxt_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h"])
@@ -464,7 +465,8 @@ def _inject_env_credentials(config: Config) -> None:
         try:
             config.mt5.login = int(mt5_login)
         except ValueError:
-            pass
+            print("[CONFIG] ⚠️  MT5_LOGIN inválido; debe ser un entero")
+            config.mt5.login = 0
     if mt5_password:
         config.mt5.password = mt5_password
     if mt5_server:

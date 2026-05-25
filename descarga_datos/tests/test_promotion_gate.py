@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 import sys
 
@@ -34,7 +35,7 @@ def test_reporte_inicial_bloquea_demo_y_real():
 
 
 def test_reporte_permita_demo_y_real_segun_etapas():
-    config = load_config_from_yaml(CONFIG_PATH)
+    config = copy.deepcopy(load_config_from_yaml(CONFIG_PATH))
     validation = config.live_trading.validation
 
     validation["completed_stages"] = {

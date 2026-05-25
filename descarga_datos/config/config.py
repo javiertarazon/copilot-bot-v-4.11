@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union, Any
+from config.canonical_defaults import CANONICAL_SYMBOL, CANONICAL_TIMEFRAME
 
 @dataclass
 class StorageConfig:
@@ -63,9 +64,9 @@ class MT5Config:
     login: int = 0
     password: str = ""
     timeout: int = 60000
-    default_symbol_list: List[str] = field(default_factory=lambda: ["XAUUSD"])
-    default_timeframe: str = "15m"
-    timeframes: List[str] = field(default_factory=lambda: ["15m"])
+    default_symbol_list: List[str] = field(default_factory=lambda: [CANONICAL_SYMBOL])
+    default_timeframe: str = CANONICAL_TIMEFRAME
+    timeframes: List[str] = field(default_factory=lambda: [CANONICAL_TIMEFRAME])
     start_date: str = "2024-01-01"
     end_date: str = "2024-12-31"
     use_real_volume: bool = True
@@ -93,7 +94,7 @@ class Config:
         if self.exchanges is None:
             self.exchanges = {}
         if self.default_symbols is None:
-            self.default_symbols = ["XAUUSD"]
+            self.default_symbols = [CANONICAL_SYMBOL]
         if self.data_types is None:
             self.data_types = ["ohlcv"]
     

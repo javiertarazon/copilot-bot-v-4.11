@@ -14,10 +14,10 @@ Este repositorio solo promueve versiones del bot XAUUSD siguiendo este orden:
 - El reporte oficial se consulta con:
 
 ```bash
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --validation-report
+python descarga_datos/main.py --validation-report
 ```
 
 ## Estado inicial
 
-El archivo `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/config/config.yaml` arranca con todas las etapas en `false`.
+El archivo `descarga_datos/config/config.yaml` arranca con todas las etapas en `false`.
 Cada promoción debe actualizar explícitamente ese estado antes de habilitar trading demo o real.

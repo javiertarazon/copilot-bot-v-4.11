@@ -147,10 +147,11 @@ data:
 
 mt5:
   enabled: true
-  login: 0
-  password: ""
+  # Configurar vía variables de entorno MT5_LOGIN y MT5_PASSWORD
+  login: null
+  password: null
   server: "ThinkMarkets-Demo"
-  terminal_path: ""
+  terminal_path: null
   timeout: 30000
 
 exchanges:

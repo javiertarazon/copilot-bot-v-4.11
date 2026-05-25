@@ -56,7 +56,7 @@ class MT5AccountManager:
         
         print(f"✅ Cambiado a cuenta: {account['name']}")
         print(f"   Servidor: {account['server']}")
-        print("   Login/password: configurarlos manualmente en descarga_datos/.env")
+        print(f"   Login/password: configurarlos manualmente en {self.env_path}")
         print(f"\n📋 PRÓXIMOS PASOS:")
         print(f"1. Completar MT5_LOGIN y MT5_PASSWORD en {self.env_path}")
         print(f"2. Abrir MT5 y conectar a {account['server']}")

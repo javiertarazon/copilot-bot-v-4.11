@@ -3,8 +3,8 @@ active_account: "thinkmarkets"
 accounts:
   thinkmarkets:
     name: "ThinkMarkets Demo"
-    login: ""
-    password: ""
+    login: null
+    password: null
     server: "ThinkMarkets-Demo"
     broker: "ThinkMarkets"
     account_type: "Demo Standard"

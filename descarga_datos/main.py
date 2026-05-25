@@ -28,6 +28,7 @@ import sys
 import subprocess
 import socket
 import json
+from config.canonical_defaults import CANONICAL_SYMBOL, CANONICAL_TIMEFRAME
 
 # ============================================================================= 
 # FIX PARA UNICODE EN WINDOWS
@@ -255,11 +256,15 @@ def _enforce_live_validation_policy(config) -> bool:
     account_type = str(getattr(config.live_trading, "account_type", "DEMO")).upper()
     if account_type == "REAL":
         if not report["real_ready"]:
-            print(" [ERROR] Trading REAL bloqueado: falta completar validación o permiso explícito.")
+            faltantes = ", ".join(report["missing_real"])
+            if not faltantes and not report["allow_real_trading"]:
+                faltantes = "permiso explícito para cuenta real"
+            print(f" [ERROR] Trading REAL bloqueado. Faltantes: {faltantes}.")
             return False
     else:
         if not report["demo_ready"]:
-            print(" [ERROR] Trading DEMO bloqueado: faltan entrenamiento, validación o prueba final.")
+            faltantes = ", ".join(report["missing_demo"])
+            print(f" [ERROR] Trading DEMO bloqueado. Faltantes: {faltantes}.")
             return False
 
     return True
@@ -284,8 +289,8 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
     # Soportar tanto objetos Config como diccionarios
     if isinstance(config, dict):
         backtest_config = config.get('backtesting', {})
-        symbols = symbols or backtest_config.get('symbols', ['XAUUSD'])
-        timeframe = timeframe or backtest_config.get('timeframe', '15m')
+        symbols = symbols or backtest_config.get('symbols', [CANONICAL_SYMBOL])
+        timeframe = timeframe or backtest_config.get('timeframe', CANONICAL_TIMEFRAME)
         start_date = start_date or backtest_config.get('start_date', '2024-01-01')
         end_date = end_date or backtest_config.get('end_date', '2024-12-31')
     else:
@@ -417,6 +422,10 @@ def run_live_mt5():
             print(" [OK] Cuenta configurada como DEMO - Modo seguro para pruebas")
     else:
         print(" [OK] Live trading DESHABILITADO - Modo seguro")
+
+    if not getattr(config.mt5, "login", None) or not getattr(config.mt5, "password", None):
+        print(" [ERROR] Configuración MT5 incompleta. Define MT5_LOGIN y MT5_PASSWORD en descarga_datos/.env (puedes copiar descarga_datos/.env.example) o variables de entorno.")
+        return False
 
     if not _enforce_live_validation_policy(config):
         return False
@@ -846,8 +855,8 @@ async def run_optimization_pipeline():
         # Este pipeline ya incluye descarga automática de datos
         from optimizacion.run_optimization_pipeline2 import OptimizationPipeline
         
-        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['XAUUSD']
-        timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '15m'
+        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else [CANONICAL_SYMBOL]
+        timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else CANONICAL_TIMEFRAME
         
         print(f"\n[TARGET] Símbolos a procesar: {symbols}")
         print(f"⏰ Timeframe: {timeframe}")

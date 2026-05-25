@@ -3,9 +3,10 @@ Puerta de promoción para el flujo canónico XAUUSD.
 """
 
 from typing import Any, Dict, Iterable
+from config.canonical_defaults import CANONICAL_STRATEGY, CANONICAL_SYMBOL
 
 
-DEFAULT_REQUIRED_STAGES = ["training", "validation", "final_test", "sandbox_demo"]
+DEFAULT_REQUIRED_STAGES = ("training", "validation", "final_test", "sandbox_demo")
 
 
 def _get_live_validation_config(config: Any) -> Dict[str, Any]:
@@ -23,22 +24,36 @@ def _normalize_stage_map(stage_names: Iterable[str], completed: Dict[str, Any]) 
 def build_validation_report(config: Any) -> Dict[str, Any]:
     validation = _get_live_validation_config(config)
 
-    required_stages = validation.get("required_stages") or list(DEFAULT_REQUIRED_STAGES)
-    completed_raw = validation.get("completed_stages") or {}
+    required_stages = validation.get("required_stages")
+    if required_stages is None:
+        required_stages = list(DEFAULT_REQUIRED_STAGES)
+
+    completed_raw = validation.get("completed_stages")
+    if completed_raw is None:
+        completed_raw = {}
     completed_stages = _normalize_stage_map(required_stages, completed_raw)
 
-    promotion_rules = validation.get("promotion_rules") or {}
-    demo_requires = promotion_rules.get("demo_requires") or ["training", "validation", "final_test"]
-    real_requires = promotion_rules.get("real_requires") or list(DEFAULT_REQUIRED_STAGES)
-    allow_real_trading = bool(validation.get("allow_real_trading", False))
+    promotion_rules = validation.get("promotion_rules")
+    if promotion_rules is None:
+        promotion_rules = {}
+
+    demo_requires = promotion_rules.get("demo_requires")
+    if demo_requires is None:
+        demo_requires = ["training", "validation", "final_test"]
+
+    real_requires = promotion_rules.get("real_requires")
+    if real_requires is None:
+        real_requires = list(DEFAULT_REQUIRED_STAGES)
+
+    allow_real_trading = validation.get("allow_real_trading", False)
     current_stage = validation.get("current_stage", "training")
 
     missing_demo = [stage for stage in demo_requires if not completed_stages.get(stage, False)]
     missing_real = [stage for stage in real_requires if not completed_stages.get(stage, False)]
 
     return {
-        "symbol": getattr(getattr(config, "live_trading", None), "active_symbol", "XAUUSD"),
-        "strategy": getattr(getattr(config, "live_trading", None), "active_strategy", "UltraDetailedHeikinAshiML"),
+        "symbol": getattr(getattr(config, "live_trading", None), "active_symbol", CANONICAL_SYMBOL),
+        "strategy": getattr(getattr(config, "live_trading", None), "active_strategy", CANONICAL_STRATEGY),
         "current_stage": current_stage,
         "required_stages": required_stages,
         "completed_stages": completed_stages,

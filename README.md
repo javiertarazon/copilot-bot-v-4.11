@@ -22,11 +22,11 @@ Este repositorio deja de ser multi-versión y multi-activo. La operación oficia
 
 Archivo principal:
 
-- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/config/config.yaml`
+- `descarga_datos/config/config.yaml`
 
 Variables sensibles:
 
-- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/.env.example`
+- `descarga_datos/.env.example`
 
 Las credenciales MT5 ya no se guardan en documentación ni en YAML operativo. Deben venir desde variables de entorno:
 
@@ -34,28 +34,28 @@ Las credenciales MT5 ya no se guardan en documentación ni en YAML operativo. De
 MT5_LOGIN=
 MT5_PASSWORD=
 MT5_SERVER=ThinkMarkets-Demo
-MT5_PATH=
+MT5_PATH= # Opcional: ruta personalizada a terminal64.exe
 ```
 
 ## Comandos oficiales
 
 ```bash
 # Crear entorno
-python3 -m venv /tmp/workspace/javiertarazon/copilot-bot-v-4.11/.venv
-. /tmp/workspace/javiertarazon/copilot-bot-v-4.11/.venv/bin/activate
-pip install -r /tmp/workspace/javiertarazon/copilot-bot-v-4.11/requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
 
 # Entrenamiento
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --train-ml
+python descarga_datos/main.py --train-ml
 
 # Backtest / prueba final offline
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --backtest-only
+python descarga_datos/main.py --backtest-only
 
 # Reporte de promoción
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --validation-report
+python descarga_datos/main.py --validation-report
 
 # Sandbox / demo en vivo
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --live-mt5
+python descarga_datos/main.py --live-mt5
 ```
 
 ## Regla de promoción
@@ -65,7 +65,7 @@ python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --
 
 La política está documentada en:
 
-- `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/docs/VALIDACION_XAUUSD.md`
+- `docs/VALIDACION_XAUUSD.md`
 
 ## Estado de limpieza
 

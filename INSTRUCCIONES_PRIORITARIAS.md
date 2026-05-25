@@ -10,7 +10,7 @@
 ### 2. Punto de entrada
 
 - El único punto de entrada operativo es:
-  - `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py`
+  - `descarga_datos/main.py`
 
 ### 3. Alcance
 
@@ -39,16 +39,16 @@ Ninguna versión se ejecuta en demo o real sin pasar este orden:
 ### 6. Archivos canónicos
 
 - Configuración: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/config/config.yaml`
-- Validación: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/docs/VALIDACION_XAUUSD.md`
-- Estrategia principal: `/tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/strategies/ultra_detailed_heikin_ashi_ml_strategy.py`
+- Validación: `docs/VALIDACION_XAUUSD.md`
+- Estrategia principal: `descarga_datos/strategies/ultra_detailed_heikin_ashi_ml_strategy.py`
 
 ## Comandos oficiales
 
 ```bash
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --train-ml
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --backtest-only
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --validation-report
-python /tmp/workspace/javiertarazon/copilot-bot-v-4.11/descarga_datos/main.py --live-mt5
+python descarga_datos/main.py --train-ml
+python descarga_datos/main.py --backtest-only
+python descarga_datos/main.py --validation-report
+python descarga_datos/main.py --live-mt5
 ```
 
 ### 🩺 Verificación de Sistema
