@@ -188,9 +188,12 @@ class DataStorage(BaseDataHandler):
                 df['timestamp'] = _normalize_timestamp_series(df['timestamp'])
                 df = df.dropna(subset=['timestamp'])
                 df['timestamp'] = df['timestamp'].astype(np.int64)
-                # Validar rango temporal
-                if (df['timestamp'] < MIN_VALID_TS).any() or (df['timestamp'] > MAX_VALID_TS).any():
-                    raise ValueError(f"Timestamps fuera del rango válido: 1980-01-01 a 2050-01-01")
+                df = df[
+                    (df['timestamp'] >= MIN_VALID_TS) &
+                    (df['timestamp'] <= MAX_VALID_TS)
+                ]
+                if df.empty:
+                    raise ValueError("No quedan timestamps válidos tras la normalización")
             
             # Preparar tipos de datos para SQLite
             for col in df.columns:
