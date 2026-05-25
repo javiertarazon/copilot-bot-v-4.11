@@ -978,16 +978,22 @@ class AdvancedDataDownloader:
                     asset_class = get_asset_class(symbol)
                     start_req = pd.Timestamp(df_normalized['timestamp'].min(), unit='s') if df_normalized['timestamp'].dtype != 'datetime64[ns]' else df_normalized['timestamp'].min()
                     end_req = pd.Timestamp(df_normalized['timestamp'].max(), unit='s') if df_normalized['timestamp'].dtype != 'datetime64[ns]' else df_normalized['timestamp'].max()
-                    # NOTA: Para una estimación más precisa se debería usar el rango solicitado original; aquí se usa rango de datos disponibles.
-                    expected = expected_candles_for_range(start_req, end_req, timeframe, asset_class)
-                    coverage = (len(df_normalized) / expected * 100) if expected else 100
+                    existing_meta = self.storage.get_metadata(symbol, timeframe) or {}
+                    effective_start = min(start_req, pd.Timestamp(existing_meta['start_ts'], unit='s')) if existing_meta.get('start_ts') else start_req
+                    effective_end = max(end_req, pd.Timestamp(existing_meta['end_ts'], unit='s')) if existing_meta.get('end_ts') else end_req
+                    total_records = len(df_normalized) + max(int(existing_meta.get('records', 0)) - len(df_normalized), 0)
                     source_exchange = df_normalized.attrs.get('source_exchange') if hasattr(df_normalized, 'attrs') else None
+                    if source_exchange == 'yahoo_finance_daily':
+                        expected = expected_candles_for_range(effective_start, effective_end, '1d', asset_class)
+                    else:
+                        expected = expected_candles_for_range(effective_start, effective_end, timeframe, asset_class)
+                    coverage = (total_records / expected * 100) if expected else 100
                     self.storage.upsert_metadata({
                         'symbol': symbol,
                         'timeframe': timeframe,
-                        'start_ts': int(start_req.timestamp()),
-                        'end_ts': int(end_req.timestamp()),
-                        'records': len(df_normalized),
+                        'start_ts': int(effective_start.timestamp()),
+                        'end_ts': int(effective_end.timestamp()),
+                        'records': total_records,
                         'coverage_pct': round(coverage, 2),
                         'asset_class': asset_class,
                         'source_exchange': source_exchange

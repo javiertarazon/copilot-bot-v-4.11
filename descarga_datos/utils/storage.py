@@ -179,6 +179,23 @@ class DataStorage(BaseDataHandler):
                 conn.execute("BEGIN")
                 
                 try:
+                    escaped_table = _escape_table_name(table_name)
+
+                    # Fusionar históricos existentes por timestamp para conservar datos de distintos periodos
+                    if self.table_exists(table_name):
+                        try:
+                            existing_df = pd.read_sql_query(f"SELECT * FROM {escaped_table}", conn)
+                            if not existing_df.empty and 'timestamp' in existing_df.columns:
+                                existing_df['timestamp'] = pd.to_numeric(existing_df['timestamp'], errors='coerce')
+                                df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+                                existing_df = existing_df.dropna(subset=['timestamp'])
+                                df = df.dropna(subset=['timestamp'])
+                                df = pd.concat([existing_df, df], ignore_index=True)
+                                df = df.drop_duplicates(subset=['timestamp'], keep='last')
+                                df = df.sort_values('timestamp').reset_index(drop=True)
+                        except Exception as merge_error:
+                            logger.warning(f"No se pudo fusionar histórico existente en {table_name}: {merge_error}")
+
                     # Crear tabla si no existe
                     column_definitions = []
                     for col in df.columns:
@@ -192,22 +209,15 @@ class DataStorage(BaseDataHandler):
                             dtype = 'TEXT'
                         column_definitions.append(f"{col} {dtype}")
                     
-                    escaped_table = _escape_table_name(table_name)
                     create_table_sql = f"""
                     CREATE TABLE IF NOT EXISTS {escaped_table} (
                         {', '.join(column_definitions)}
                     )
                     """
                     
-                    # Crear tabla
+                    # Recrear tabla con el histórico fusionado
+                    conn.execute(f"DROP TABLE IF EXISTS {escaped_table}")
                     conn.execute(create_table_sql)
-                    
-                    # Eliminar datos existentes si hay
-                    try:
-                        delete_sql = f"DELETE FROM {escaped_table}"
-                        conn.execute(delete_sql)
-                    except sqlite3.OperationalError:
-                        pass  # La tabla no existe, lo cual está bien
                     
                     # Guardar los datos
                     df.to_sql(table_name, conn, if_exists='append', index=False)

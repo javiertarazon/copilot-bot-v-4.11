@@ -134,7 +134,13 @@ async def run_full_backtesting_with_batches():
         start = datetime.strptime(config.backtesting.start_date, "%Y-%m-%d")
         end = datetime.strptime(config.backtesting.end_date, "%Y-%m-%d")
         days = (end - start).days
-        expected_velas = days * 6  # 6 velas/día en 4h
+        from utils.market_sessions import expected_candles_for_range, get_asset_class
+        expected_velas = expected_candles_for_range(
+            pd.Timestamp(config.backtesting.start_date),
+            pd.Timestamp(config.backtesting.end_date),
+            config.backtesting.timeframe,
+            get_asset_class(config.backtesting.symbols[0]) if config.backtesting.symbols else "forex",
+        )
 
         print(f"[BACKTEST] 📅 Período: {days} días (~{expected_velas:,} velas esperadas)")
 
@@ -156,8 +162,10 @@ async def run_full_backtesting_with_batches():
             for symbol in config.backtesting.symbols:
                 try:
                     table_name = f"{symbol.replace('/', '_').replace('.', '_').replace(':', '_')}_{config.backtesting.timeframe}"
-                    existing_data = storage.query_data(table_name, None, None)
-                    if existing_data is None or len(existing_data) < 1000:  # Mínimo 1000 velas
+                    start_ts = int(pd.Timestamp(config.backtesting.start_date).timestamp()) if getattr(config.backtesting, 'start_date', None) else None
+                    end_ts = int(pd.Timestamp(config.backtesting.end_date).timestamp()) if getattr(config.backtesting, 'end_date', None) else None
+                    existing_data = storage.query_data(table_name, start_ts, end_ts)
+                    if existing_data is None or len(existing_data) < 100:  # Mínimo flexible para fallback diario
                         data_available = False
                         print(f"[BACKTEST] ❌ Datos insuficientes para {symbol} en SQLite")
                         break
