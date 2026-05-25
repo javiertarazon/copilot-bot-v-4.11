@@ -15,6 +15,10 @@ try:
     NUMBA_AVAILABLE = True
 except ImportError:
     NUMBA_AVAILABLE = False
+    def jit(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
     print("⚠️  Numba not installed. Install with: pip install numba")
 
 logger = logging.getLogger(__name__)
