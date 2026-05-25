@@ -27,20 +27,21 @@ def test_config_usa_periodos_anuales_separados():
 
 def test_pipeline_backtest_final_usa_rango_dedicado(monkeypatch):
     fake_strategy_module = types.ModuleType("strategies.ultra_detailed_heikin_ashi_ml_strategy")
+    captured = {}
 
     class PlaceholderStrategy:
         def __init__(self, config=None):
             self.config = config
 
         def run(self, data, symbol, timeframe):
+            captured["data_start"] = data.index.min()
+            captured["data_end"] = data.index.max()
             return {"total_pnl": 123.0, "symbol": symbol, "timeframe": timeframe}
 
     fake_strategy_module.UltraDetailedHeikinAshiMLStrategy = PlaceholderStrategy
     monkeypatch.setitem(sys.modules, "strategies.ultra_detailed_heikin_ashi_ml_strategy", fake_strategy_module)
 
     from descarga_datos.optimizacion import run_optimization_pipeline2 as pipeline_module
-
-    captured = {}
 
     class FakeDataStorage:
         def query_data(self, table_name, start_ts=None, end_ts=None):
@@ -83,4 +84,6 @@ def test_pipeline_backtest_final_usa_rango_dedicado(monkeypatch):
     assert captured["table_name"] == "XAUUSD_15m"
     assert captured["start_ts"] == int(pd.Timestamp("2025-01-01").timestamp())
     assert captured["end_ts"] == int(pd.Timestamp("2025-12-31").timestamp())
+    assert captured["data_start"] == pd.Timestamp("2025-01-01")
+    assert captured["data_end"] == pd.Timestamp("2025-01-03")
     assert result["total_pnl"] == 123.0
