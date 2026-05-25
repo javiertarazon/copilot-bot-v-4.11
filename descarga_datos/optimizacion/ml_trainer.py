@@ -154,8 +154,10 @@ class MLTrainer:
 
                 table_name = f"{self.symbol.replace('/', '_').replace('.', '_')}_{self.timeframe}"
                 if storage.table_exists(table_name):
-                    # Obtener todos los datos disponibles en SQLite
-                    all_data = storage.query_data(table_name)
+                    # Obtener solo el rango requerido en SQLite
+                    start_ts = int(pd.Timestamp(self.train_start).timestamp())
+                    end_ts = int(pd.Timestamp(self.val_end).timestamp())
+                    all_data = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
 
                     if all_data is not None and not all_data.empty and len(all_data) >= 100:
                         logger.info(f'✅ Usando datos SQLite disponibles: {len(all_data)} registros para {self.symbol}')
