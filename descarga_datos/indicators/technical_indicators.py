@@ -554,6 +554,12 @@ class TechnicalIndicators:
             result_df['ha_open'] = ha_df['ha_open']
             result_df['ha_high'] = ha_df['ha_high']
             result_df['ha_low'] = ha_df['ha_low']
+            result_df['ha_color_change'] = np.where(
+                (result_df['ha_close'] > result_df['ha_open']) & (result_df['ha_close'].shift(1) <= result_df['ha_open'].shift(1)), 1,
+                np.where(
+                    (result_df['ha_close'] < result_df['ha_open']) & (result_df['ha_close'].shift(1) >= result_df['ha_open'].shift(1)), -1, 0
+                )
+            )
             result_df['ha_trend'] = self.calculate_ha_trend(ha_df)
             result_df['ha_candle_size_ratio'] = self.calculate_ha_candle_size_comparison(ha_df)
             
