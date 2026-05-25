@@ -516,6 +516,11 @@ class AdvancedDataDownloader:
         fallback_source = 'mt5' if primary_source == 'ccxt' else 'ccxt'
 
         self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallbacks={fallback_sources}")        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
+
+        if primary_source == 'mt5' and (not self.mt5_downloader or not self.mt5_downloader.connected):
+            self.logger.warning(f"⚠️ {symbol}: MT5 no disponible, saltando directamente a Yahoo Finance")
+            return await self._download_yahoo_finance_symbol(symbol, timeframe, start_date, end_date)
+
         for attempt in range(self.max_retries):
             try:
                 if primary_source == 'ccxt':
@@ -854,7 +859,7 @@ class AdvancedDataDownloader:
         """
         symbol_upper = symbol.upper()
         yahoo_aliases = {
-            'XAUUSD': 'XAUUSD=X',
+            'XAUUSD': 'GC=F',
             'XAGUSD': 'XAGUSD=X',
         }
         if symbol_upper in yahoo_aliases:
