@@ -695,15 +695,18 @@ async def ensure_data_availability(symbol: str, timeframe: str = '4h',
         raise Exception(f"No se pudieron obtener datos para {symbol}: {e}")
 
 def _data_covers_period(data: pd.DataFrame, start_date: str, end_date: str) -> bool:
-    """Verifica si los datos cubren el período solicitado"""
+    """Verifica si los datos cubren el período solicitado con tolerancia de mercado cerrado."""
     try:
         if data.empty or 'timestamp' not in data.columns:
             return False
-        
-        data_start = pd.to_datetime(data['timestamp'].min()).strftime('%Y-%m-%d')
-        data_end = pd.to_datetime(data['timestamp'].max()).strftime('%Y-%m-%d')
-        
-        return data_start <= start_date and data_end >= end_date
+
+        requested_start = pd.Timestamp(start_date).normalize()
+        requested_end = pd.Timestamp(end_date).normalize()
+        data_start = pd.to_datetime(data['timestamp'].min()).normalize()
+        data_end = pd.to_datetime(data['timestamp'].max()).normalize()
+
+        tolerance = pd.Timedelta(days=3)
+        return data_start <= (requested_start + tolerance) and data_end >= (requested_end - tolerance)
     except Exception:
         return False
 
