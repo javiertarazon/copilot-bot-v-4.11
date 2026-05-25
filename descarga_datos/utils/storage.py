@@ -12,6 +12,23 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+MIN_VALID_TS = int(pd.Timestamp('1970-01-01').timestamp())
+MAX_VALID_TS = int(pd.Timestamp('2050-01-01').timestamp())
+
+def _normalize_timestamp_series(series: pd.Series) -> pd.Series:
+    """Normaliza timestamps a segundos Unix."""
+    if pd.api.types.is_numeric_dtype(series):
+        numeric = pd.to_numeric(series, errors='coerce')
+        max_abs = numeric.dropna().abs().max() if not numeric.dropna().empty else 0
+        if max_abs > 10**14:
+            numeric = numeric // 10**9  # nanosegundos -> segundos
+        elif max_abs > 10**11:
+            numeric = numeric // 10**3  # milisegundos -> segundos
+        return numeric.astype('Int64')
+
+    dt = pd.to_datetime(series, errors='coerce')
+    return ((dt.astype('int64') // 10**9).astype('Int64'))
+
 def _get_sqlite_type(dtype) -> str:
     """Maps pandas dtype to SQLite data type."""
     if pd.api.types.is_integer_dtype(dtype):
@@ -157,13 +174,11 @@ class DataStorage(BaseDataHandler):
             # Preparar tipos de datos y convertir timestamps
             # Cuando se lee desde un CSV o DataFrame, asegurarse de que los timestamps estén en el formato correcto
             if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                # Convertir a Unix timestamp en segundos
-                df['timestamp'] = df['timestamp'].astype(np.int64) // 10**9
+                df['timestamp'] = _normalize_timestamp_series(df['timestamp'])
+                df = df.dropna(subset=['timestamp'])
+                df['timestamp'] = df['timestamp'].astype(np.int64)
                 # Validar rango temporal
-                min_ts = int(pd.Timestamp('1970-01-01').timestamp())
-                max_ts = int(pd.Timestamp('2050-01-01').timestamp())
-                if (df['timestamp'] < min_ts).any() or (df['timestamp'] > max_ts).any():
+                if (df['timestamp'] < MIN_VALID_TS).any() or (df['timestamp'] > MAX_VALID_TS).any():
                     raise ValueError(f"Timestamps fuera del rango válido: 1970-01-01 a 2050-01-01")
             
             # Preparar tipos de datos para SQLite
@@ -186,10 +201,18 @@ class DataStorage(BaseDataHandler):
                         try:
                             existing_df = pd.read_sql_query(f"SELECT * FROM {escaped_table}", conn)
                             if not existing_df.empty and 'timestamp' in existing_df.columns:
-                                existing_df['timestamp'] = pd.to_numeric(existing_df['timestamp'], errors='coerce')
-                                df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+                                existing_df['timestamp'] = _normalize_timestamp_series(existing_df['timestamp'])
+                                df['timestamp'] = _normalize_timestamp_series(df['timestamp'])
                                 existing_df = existing_df.dropna(subset=['timestamp'])
                                 df = df.dropna(subset=['timestamp'])
+                                existing_df = existing_df[
+                                    (existing_df['timestamp'] >= MIN_VALID_TS) &
+                                    (existing_df['timestamp'] <= MAX_VALID_TS)
+                                ]
+                                df = df[
+                                    (df['timestamp'] >= MIN_VALID_TS) &
+                                    (df['timestamp'] <= MAX_VALID_TS)
+                                ]
                                 df = pd.concat([existing_df, df], ignore_index=True)
                                 df = df.drop_duplicates(subset=['timestamp'], keep='last')
                                 df = df.sort_values('timestamp').reset_index(drop=True)
