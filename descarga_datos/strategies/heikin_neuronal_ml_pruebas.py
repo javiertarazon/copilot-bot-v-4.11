@@ -693,7 +693,7 @@ class HeikinNeuronalMLPruebasStrategy:
             raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas")
 
         # 4. Rellenar NaN restantes en indicadores no críticos
-        data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        data = data.bfill().ffill().fillna(0)
 
         print(f"Datos preparados: {len(data)} filas válidas con todos los indicadores")
         return data
@@ -738,7 +738,7 @@ class HeikinNeuronalMLPruebasStrategy:
         if len(data) < 15:
             print(f"⚠️  Muy pocos datos después de limpieza ({len(data)}). Intentando rellenar NaN...")
             # Rellenar NaN restantes con valores razonables
-            data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+            data = data.bfill().ffill().fillna(0)
             print(f"Datos rellenados: {len(data)} filas disponibles")
 
         # Validación final - Más flexible para live
@@ -746,7 +746,7 @@ class HeikinNeuronalMLPruebasStrategy:
             raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas. Mínimo 10 para live trading.")
 
         # Rellenar NaN restantes en indicadores no críticos
-        data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        data = data.bfill().ffill().fillna(0)
 
         print(f"Datos preparados para LIVE: {len(data)} filas válidas con indicadores")
         return data

@@ -842,7 +842,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas")
 
         # 4. Rellenar NaN restantes en indicadores no críticos
-        data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        data = data.bfill().ffill().fillna(0)
 
         print(f"Datos preparados: {len(data)} filas válidas con todos los indicadores")
         return data
