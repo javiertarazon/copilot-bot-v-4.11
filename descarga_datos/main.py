@@ -291,8 +291,8 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
         backtest_config = config.get('backtesting', {})
         symbols = symbols or backtest_config.get('symbols', [CANONICAL_SYMBOL])
         timeframe = timeframe or backtest_config.get('timeframe', CANONICAL_TIMEFRAME)
-        start_date = start_date or backtest_config.get('start_date', '2024-01-01')
-        end_date = end_date or backtest_config.get('end_date', '2024-12-31')
+        start_date = start_date or backtest_config.get('start_date', '2019-01-01')
+        end_date = end_date or backtest_config.get('end_date', '2019-12-31')
     else:
         # Es un objeto Config
         symbols = symbols or config.backtesting.symbols
@@ -804,14 +804,14 @@ def _resolve_pipeline_periods(config):
     training_cfg = getattr(ml_config, 'training', {}) if ml_config else {}
     optimization_cfg = getattr(ml_config, 'optimization', {}) if ml_config else {}
 
-    train_start = training_cfg.get('train_start', '2023-01-01')
-    train_end = training_cfg.get('train_end', '2023-12-31')
-    val_start = training_cfg.get('val_start', '2024-01-01')
-    val_end = training_cfg.get('val_end', '2024-12-31')
+    train_start = training_cfg.get('train_start', '2017-01-01')
+    train_end = training_cfg.get('train_end', '2017-12-31')
+    val_start = training_cfg.get('val_start', '2018-01-01')
+    val_end = training_cfg.get('val_end', '2018-12-31')
     opt_start = optimization_cfg.get('opt_start', val_start)
     opt_end = optimization_cfg.get('opt_end', val_end)
-    backtest_start = getattr(config.backtesting, 'start_date', '2025-01-01')
-    backtest_end = getattr(config.backtesting, 'end_date', '2025-12-31')
+    backtest_start = getattr(config.backtesting, 'start_date', '2019-01-01')
+    backtest_end = getattr(config.backtesting, 'end_date', '2019-12-31')
 
     starts = [date for date in [train_start, val_start, opt_start, backtest_start] if date]
     ends = [date for date in [train_end, val_end, opt_end, backtest_end] if date]
@@ -972,7 +972,7 @@ def check_data_status():
             try:
                 table_name = f"{symbol.replace('/', '_').replace('USDT', 'USDT')}_{timeframe}"
                 # Intentar obtener una muestra pequeña de datos
-                sample_data = storage_manager.get_data(symbol, timeframe, '2024-01-01', '2024-01-31')
+                sample_data = storage_manager.get_data(symbol, timeframe, '2019-01-01', '2019-01-31')
                 if sample_data is not None and len(sample_data) > 0:
                     sqlite_available[symbol] = len(sample_data)
                     print(f"  [OK] {symbol:<12} | SQLite: {len(sample_data):>6} registros (muestra)")

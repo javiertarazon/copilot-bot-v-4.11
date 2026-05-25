@@ -9,9 +9,9 @@ active_exchange: mt5
 
 backtesting:
   commission: 0.1
-  end_date: "2025-12-31"
+  end_date: "2019-12-31"
   initial_capital: 1000
-  start_date: "2025-01-01"
+  start_date: "2019-01-01"
   timeframe: "15m"
   symbols:
     - XAUUSD
@@ -221,13 +221,13 @@ indicators:
 
 ml_training:
   training:
-    train_start: "2023-01-01"
-    train_end: "2023-12-31"
-    val_start: "2024-01-01"
-    val_end: "2024-12-31"
+    train_start: "2017-01-01"
+    train_end: "2017-12-31"
+    val_start: "2018-01-01"
+    val_end: "2018-12-31"
     min_samples: 1000
   optimization:
     enabled: true
-    opt_start: "2024-01-01"
-    opt_end: "2024-12-31"
+    opt_start: "2018-01-01"
+    opt_end: "2018-12-31"
     n_trials: 100

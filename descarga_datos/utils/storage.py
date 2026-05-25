@@ -630,18 +630,18 @@ async def ensure_data_availability(symbol: str, timeframe: str = '4h',
         try:
             if hasattr(config, 'backtesting'):
                 if start_date is None:
-                    start_date = getattr(config.backtesting, 'start_date', '2023-01-01')
+                    start_date = getattr(config.backtesting, 'start_date', '2019-01-01')
                 if end_date is None:
                     end_date = getattr(config.backtesting, 'end_date', pd.Timestamp.now().strftime('%Y-%m-%d'))
             else:
                 if start_date is None:
-                    start_date = '2023-01-01'
+                    start_date = '2019-01-01'
                 if end_date is None:
                     end_date = pd.Timestamp.now().strftime('%Y-%m-%d')
         except Exception as e:
             logger.warning(f"Error obteniendo fechas de config, usando valores por defecto: {e}")
             if start_date is None:
-                start_date = '2023-01-01'
+            start_date = '2019-01-01'
             if end_date is None:
                 end_date = pd.Timestamp.now().strftime('%Y-%m-%d')
     

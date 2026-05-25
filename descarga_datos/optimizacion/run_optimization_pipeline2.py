@@ -8,9 +8,9 @@ Este script implementa el pipeline completo de optimización:
 3. Ejecuta un backtest final con los mejores parámetros
 
 Pasos:
-- Entrenamiento ML: 2023 completo
-- Validación ML / optimización: 2024 completo
-- Backtest final: Mejor configuración en 2025 completo
+- Entrenamiento ML: 2017 completo
+- Validación ML / optimización: 2018 completo
+- Backtest final: Mejor configuración en 2019 completo
 """
 
 import sys, os
@@ -41,14 +41,14 @@ class OptimizationPipeline:
     def __init__(self,
                  symbols=None,
                  timeframe="4h",
-                 train_start="2023-01-01",
-                 train_end="2023-12-31",
-                 val_start="2024-01-01",
-                 val_end="2024-12-31",
-                 opt_start="2024-01-01",
-                 opt_end="2024-12-31",
-                 backtest_start="2025-01-01",
-                 backtest_end="2025-12-31",
+                 train_start="2017-01-01",
+                 train_end="2017-12-31",
+                 val_start="2018-01-01",
+                 val_end="2018-12-31",
+                 opt_start="2018-01-01",
+                 opt_end="2018-12-31",
+                 backtest_start="2019-01-01",
+                 backtest_end="2019-12-31",
                  n_trials=300):
         """
         Inicializa el pipeline de optimización completo.
@@ -511,14 +511,14 @@ async def main():
     pipeline = OptimizationPipeline(
         symbols=args.symbols,
         timeframe=args.timeframe,
-        train_start="2023-01-01",
-        train_end="2023-12-31",
-        val_start="2024-01-01",
-        val_end="2024-12-31",
-        opt_start="2024-01-01",
-        opt_end="2024-12-31",
-        backtest_start="2025-01-01",
-        backtest_end="2025-12-31",
+        train_start="2017-01-01",
+        train_end="2017-12-31",
+        val_start="2018-01-01",
+        val_end="2018-12-31",
+        opt_start="2018-01-01",
+        opt_end="2018-12-31",
+        backtest_start="2019-01-01",
+        backtest_end="2019-12-31",
         n_trials=args.trials
     )
 

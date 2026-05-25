@@ -34,8 +34,8 @@ class MT5Config:
 class BacktestingConfig:
     symbols: List[str] = field(default_factory=lambda: [CANONICAL_SYMBOL])
     timeframe: str = CANONICAL_TIMEFRAME
-    start_date: str = "2024-01-01"
-    end_date: str = "2024-06-01"
+    start_date: str = "2019-01-01"
+    end_date: str = "2019-12-31"
     initial_capital: float = 10000.0
     commission: float = 0.1
     slippage: float = 0.05
@@ -191,10 +191,10 @@ class MLTrainingConfig:
     )
     training: Dict[str, Any] = field(
         default_factory=lambda: {
-            "train_start": "2023-01-01",
-            "train_end": "2023-12-31",
-            "val_start": "2024-01-01",
-            "val_end": "2024-12-31",
+            "train_start": "2017-01-01",
+            "train_end": "2017-12-31",
+            "val_start": "2018-01-01",
+            "val_end": "2018-12-31",
             "min_samples": 1000,
         }
     )
@@ -202,8 +202,8 @@ class MLTrainingConfig:
         default_factory=lambda: {
             "enabled": False,
             "n_trials": 100,
-            "opt_start": "2024-01-01",
-            "opt_end": "2024-12-31",
+            "opt_start": "2018-01-01",
+            "opt_end": "2018-12-31",
             "study_name": "estrategia_gaadors_optimization",
         }
     )

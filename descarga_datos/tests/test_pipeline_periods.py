@@ -17,12 +17,12 @@ CONFIG_PATH = repo_root / "descarga_datos" / "config" / "config.yaml"
 def test_config_usa_periodos_anuales_separados():
     config = load_config_from_yaml(CONFIG_PATH)
 
-    assert config.ml_training.training["train_start"] == "2023-01-01"
-    assert config.ml_training.training["train_end"] == "2023-12-31"
-    assert config.ml_training.training["val_start"] == "2024-01-01"
-    assert config.ml_training.training["val_end"] == "2024-12-31"
-    assert config.backtesting.start_date == "2025-01-01"
-    assert config.backtesting.end_date == "2025-12-31"
+    assert config.ml_training.training["train_start"] == "2017-01-01"
+    assert config.ml_training.training["train_end"] == "2017-12-31"
+    assert config.ml_training.training["val_start"] == "2018-01-01"
+    assert config.ml_training.training["val_end"] == "2018-12-31"
+    assert config.backtesting.start_date == "2019-01-01"
+    assert config.backtesting.end_date == "2019-12-31"
 
 
 def test_pipeline_backtest_final_usa_rango_dedicado(monkeypatch):
@@ -48,7 +48,7 @@ def test_pipeline_backtest_final_usa_rango_dedicado(monkeypatch):
             captured["table_name"] = table_name
             captured["start_ts"] = start_ts
             captured["end_ts"] = end_ts
-            index = pd.date_range("2025-01-01", periods=3, freq="D")
+            index = pd.date_range("2019-01-01", periods=3, freq="D")
             return pd.DataFrame(
                 {
                     "open": [1.0, 2.0, 3.0],
@@ -68,22 +68,22 @@ def test_pipeline_backtest_final_usa_rango_dedicado(monkeypatch):
     pipeline = pipeline_module.OptimizationPipeline(
         symbols=["XAUUSD"],
         timeframe="15m",
-        train_start="2023-01-01",
-        train_end="2023-12-31",
-        val_start="2024-01-01",
-        val_end="2024-12-31",
-        opt_start="2024-01-01",
-        opt_end="2024-12-31",
-        backtest_start="2025-01-01",
-        backtest_end="2025-12-31",
+        train_start="2017-01-01",
+        train_end="2017-12-31",
+        val_start="2018-01-01",
+        val_end="2018-12-31",
+        opt_start="2018-01-01",
+        opt_end="2018-12-31",
+        backtest_start="2019-01-01",
+        backtest_end="2019-12-31",
         n_trials=1,
     )
 
     result = pipeline._run_backtest_with_params("XAUUSD", {}, "prueba")
 
     assert captured["table_name"] == "XAUUSD_15m"
-    assert captured["start_ts"] == int(pd.Timestamp("2025-01-01").timestamp())
-    assert captured["end_ts"] == int(pd.Timestamp("2025-12-31").timestamp())
-    assert captured["data_start"] == pd.Timestamp("2025-01-01")
-    assert captured["data_end"] == pd.Timestamp("2025-01-03")
+    assert captured["start_ts"] == int(pd.Timestamp("2019-01-01").timestamp())
+    assert captured["end_ts"] == int(pd.Timestamp("2019-12-31").timestamp())
+    assert captured["data_start"] == pd.Timestamp("2019-01-01")
+    assert captured["data_end"] == pd.Timestamp("2019-01-03")
     assert result["total_pnl"] == 123.0
