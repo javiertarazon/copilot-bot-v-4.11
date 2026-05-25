@@ -512,7 +512,8 @@ class AdvancedDataDownloader:
         # Detectar fuente primaria
         is_crypto = self._is_crypto_symbol(symbol)
         primary_source = 'ccxt' if is_crypto else 'mt5'
-        fallback_sources = ['okx', 'kraken', 'kucoin'] if primary_source == 'ccxt' else ['mt5']
+        fallback_sources = ['mt5'] if primary_source == 'ccxt' else ['ccxt', 'yahoo_finance']
+        fallback_source = 'mt5' if primary_source == 'ccxt' else 'ccxt'
 
         self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallbacks={fallback_sources}")        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
         for attempt in range(self.max_retries):
@@ -851,6 +852,14 @@ class AdvancedDataDownloader:
           ETH/USD → ETH-USD
           AAPL/USD → AAPL (para acciones)
         """
+        symbol_upper = symbol.upper()
+        yahoo_aliases = {
+            'XAUUSD': 'XAUUSD=X',
+            'XAGUSD': 'XAGUSD=X',
+        }
+        if symbol_upper in yahoo_aliases:
+            return yahoo_aliases[symbol_upper]
+
         if '/' not in symbol:
             return symbol
 
