@@ -8,9 +8,9 @@ Este script implementa el pipeline completo de optimización:
 3. Ejecuta un backtest final con los mejores parámetros
 
 Pasos:
-- Entrenamiento ML: 2024 H1 (train), 2024 H2 (validation)
-- Optimización: 2024 completo (datos específicos de optimización)
-- Backtest final: Mejor configuración en todo 2024
+- Entrenamiento ML: 2023 completo
+- Validación ML / optimización: 2024 completo
+- Backtest final: Mejor configuración en 2025 completo
 """
 
 import sys, os
@@ -41,12 +41,14 @@ class OptimizationPipeline:
     def __init__(self,
                  symbols=None,
                  timeframe="4h",
-                 train_start="2022-01-01",
-                 train_end="2023-06-30",
-                 val_start="2022-07-01",
-                 val_end="2023-12-31",
-                 opt_start="2022-01-01",
-                 opt_end="2023-12-31",
+                 train_start="2023-01-01",
+                 train_end="2023-12-31",
+                 val_start="2024-01-01",
+                 val_end="2024-12-31",
+                 opt_start="2024-01-01",
+                 opt_end="2024-12-31",
+                 backtest_start="2025-01-01",
+                 backtest_end="2025-12-31",
                  n_trials=300):
         """
         Inicializa el pipeline de optimización completo.
@@ -57,6 +59,7 @@ class OptimizationPipeline:
             train_start/end: Período de entrenamiento ML
             val_start/end: Período de validación ML
             opt_start/end: Período para optimización
+            backtest_start/end: Período para backtest final
             n_trials: Número de pruebas para Optuna
         """
         self.symbols = symbols if symbols else ["BTC/USDT"]
@@ -67,12 +70,19 @@ class OptimizationPipeline:
         self.val_end = val_end
         self.opt_start = opt_start
         self.opt_end = opt_end
+        self.backtest_start = backtest_start
+        self.backtest_end = backtest_end
         self.n_trials = n_trials
 
         # Cargar configuración
         self.config = load_config_from_yaml()
         logger.info(f"Pipeline inicializado para símbolos: {self.symbols}")
         logger.info(f"Timeframe: {timeframe}, Trials: {n_trials}")
+        logger.info(
+            f"Períodos: train={train_start}→{train_end}, "
+            f"val={val_start}→{val_end}, opt={opt_start}→{opt_end}, "
+            f"backtest={backtest_start}→{backtest_end}"
+        )
 
     async def run_complete_pipeline(self):
         """
@@ -222,7 +232,7 @@ class OptimizationPipeline:
         Returns:
             dict: Resultados del backtest
         """
-        logger.info(f"Ejecutando backtest final para {symbol}")
+        logger.info(f"Ejecutando backtest final para {symbol} en {self.backtest_start} → {self.backtest_end}")
 
         # Verificar que opt_results sea válido
         if opt_results is None or not isinstance(opt_results, tuple):
@@ -325,8 +335,8 @@ class OptimizationPipeline:
         from utils.storage import DataStorage
         storage = DataStorage()
 
-        start_ts = int(pd.Timestamp(self.opt_start).timestamp()) if self.opt_start else None
-        end_ts = int(pd.Timestamp(self.opt_end).timestamp()) if self.opt_end else None
+        start_ts = int(pd.Timestamp(self.backtest_start).timestamp()) if self.backtest_start else None
+        end_ts = int(pd.Timestamp(self.backtest_end).timestamp()) if self.backtest_end else None
         table_name = f"{symbol.replace('/', '_')}_{self.timeframe}"
 
         data = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
@@ -501,12 +511,14 @@ async def main():
     pipeline = OptimizationPipeline(
         symbols=args.symbols,
         timeframe=args.timeframe,
-        train_start="2025-01-01",
-        train_end="2025-06-30",
-        val_start="2025-07-01",
-        val_end="2025-08-31",
-        opt_start="2025-01-01",
-        opt_end="2025-08-31",
+        train_start="2023-01-01",
+        train_end="2023-12-31",
+        val_start="2024-01-01",
+        val_end="2024-12-31",
+        opt_start="2024-01-01",
+        opt_end="2024-12-31",
+        backtest_start="2025-01-01",
+        backtest_end="2025-12-31",
         n_trials=args.trials
     )
 

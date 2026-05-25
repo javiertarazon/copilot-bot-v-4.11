@@ -794,6 +794,37 @@ async def train_ml_models():
         import traceback
         traceback.print_exc()
         return False
+
+
+def _resolve_pipeline_periods(config):
+    """
+    Resuelve los períodos de entrenamiento, validación, optimización y backtesting.
+    """
+    ml_config = getattr(config, 'ml_training', None)
+    training_cfg = getattr(ml_config, 'training', {}) if ml_config else {}
+    optimization_cfg = getattr(ml_config, 'optimization', {}) if ml_config else {}
+
+    train_start = training_cfg.get('train_start', '2023-01-01')
+    train_end = training_cfg.get('train_end', '2023-12-31')
+    val_start = training_cfg.get('val_start', '2024-01-01')
+    val_end = training_cfg.get('val_end', '2024-12-31')
+    opt_start = optimization_cfg.get('opt_start', val_start)
+    opt_end = optimization_cfg.get('opt_end', val_end)
+    backtest_start = getattr(config.backtesting, 'start_date', '2025-01-01')
+    backtest_end = getattr(config.backtesting, 'end_date', '2025-12-31')
+
+    starts = [date for date in [train_start, val_start, opt_start, backtest_start] if date]
+    ends = [date for date in [train_end, val_end, opt_end, backtest_end] if date]
+
+    return {
+        'training': {'start': train_start, 'end': train_end},
+        'validation': {'start': val_start, 'end': val_end},
+        'optimization': {'start': opt_start, 'end': opt_end},
+        'backtest': {'start': backtest_start, 'end': backtest_end},
+        'availability': {'start': min(starts), 'end': max(ends)},
+    }
+
+
 async def run_optimization_pipeline():
     """
     OPTIMIZACIÓN CENTRALIZADA
@@ -823,9 +854,15 @@ async def run_optimization_pipeline():
             print("[INFO] Para habilitar, cambiar ml_training.optimization.enabled: true")
             return False
         
+        periods = _resolve_pipeline_periods(config)
+
         # PASO 2: Verificar y asegurar disponibilidad de datos
         print("[SEARCH] Verificando datos para optimización...")
-        data_status = await verify_data_availability(config)
+        data_status = await verify_data_availability(
+            config,
+            start_date=periods['availability']['start'],
+            end_date=periods['availability']['end'],
+        )
         
         # Validar que tengamos datos disponibles
         available_symbols = [symbol for symbol, status in data_status.items() if status['status'] == 'ok']
@@ -836,17 +873,20 @@ async def run_optimization_pipeline():
         print(f"[OK] Datos validados para optimización: {len(available_symbols)} símbolos")
         
         # Obtener configuración de períodos
-        train_start = ml_config.training.get('train_start', '2023-01-01')
-        train_end = ml_config.training.get('train_end', '2023-12-31')
-        val_start = ml_config.training.get('val_start', '2024-01-01')
-        val_end = ml_config.training.get('val_end', '2025-10-06')
-        opt_start = ml_config.optimization.get('opt_start', '2024-01-01')
-        opt_end = ml_config.optimization.get('opt_end', '2025-10-06')
+        train_start = periods['training']['start']
+        train_end = periods['training']['end']
+        val_start = periods['validation']['start']
+        val_end = periods['validation']['end']
+        opt_start = periods['optimization']['start']
+        opt_end = periods['optimization']['end']
+        backtest_start = periods['backtest']['start']
+        backtest_end = periods['backtest']['end']
         n_trials = ml_config.optimization.get('n_trials', 100)
         
         print(f"📅 Período entrenamiento ML: {train_start} → {train_end}")
         print(f"📅 Período validación ML: {val_start} → {val_end}")
         print(f"📅 Período optimización: {opt_start} → {opt_end}")
+        print(f"📅 Período backtesting final: {backtest_start} → {backtest_end}")
         print(f"🔢 Número de trials: {n_trials}")
         
         # PASO 3: Ejecutar optimización con datos centralizados
@@ -870,6 +910,8 @@ async def run_optimization_pipeline():
             val_end=val_end,
             opt_start=opt_start,
             opt_end=opt_end,
+            backtest_start=backtest_start,
+            backtest_end=backtest_end,
             n_trials=n_trials
         )
         

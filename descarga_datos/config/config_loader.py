@@ -194,7 +194,7 @@ class MLTrainingConfig:
             "train_start": "2023-01-01",
             "train_end": "2023-12-31",
             "val_start": "2024-01-01",
-            "val_end": "2025-10-06",
+            "val_end": "2024-12-31",
             "min_samples": 1000,
         }
     )
@@ -203,7 +203,7 @@ class MLTrainingConfig:
             "enabled": False,
             "n_trials": 100,
             "opt_start": "2024-01-01",
-            "opt_end": "2025-10-06",
+            "opt_end": "2024-12-31",
             "study_name": "estrategia_gaadors_optimization",
         }
     )

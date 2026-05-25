@@ -52,12 +52,12 @@ class MLTrainer:
             self.train_start = training_config.get('train_start', '2023-01-01')
             self.train_end = training_config.get('train_end', '2023-12-31')
             self.val_start = training_config.get('val_start', '2024-01-01')
-            self.val_end = training_config.get('val_end', '2025-10-06')
+            self.val_end = training_config.get('val_end', '2024-12-31')
         else:
             self.train_start = '2023-01-01'
             self.train_end = '2023-12-31'
             self.val_start = '2024-01-01'
-            self.val_end = '2025-10-06'
+            self.val_end = '2024-12-31'
             
         # Usar la ruta centralizada en descarga_datos/models
         self.models_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'models' / symbol.replace('/', '_')
