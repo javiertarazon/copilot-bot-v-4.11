@@ -779,9 +779,10 @@ class AdvancedDataDownloader:
         use_daily = True
         yahoo_interval = '1d'
         
-        # Solo usar intervalos altos si el rango es reciente (< 60 días)
+        # Solo usar intervalos intradía si el rango es reciente y cercano al presente.
         date_diff = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days
-        if date_diff <= 60 and timeframe in ['1m', '5m', '15m', '30m', '1h']:
+        days_from_now = (pd.Timestamp.now().normalize() - pd.Timestamp(end_date).normalize()).days
+        if date_diff <= 60 and days_from_now <= 60 and timeframe in ['1m', '5m', '15m', '30m', '1h']:
             use_daily = False
             yahoo_interval = timeframe
 

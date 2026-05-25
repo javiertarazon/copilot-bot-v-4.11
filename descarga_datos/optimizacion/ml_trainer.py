@@ -40,7 +40,7 @@ class MLTrainer:
         ml_config_dict = self.config.ml_training.training if hasattr(self.config, 'ml_training') else {}
         self.ml_config = ml_config_dict if isinstance(ml_config_dict, dict) else {}
         enabled_models_dict = self.config.ml_training.enabled_models if hasattr(self.config, 'ml_training') else {}
-        self.enabled_models = enabled_models_dict if isinstance(enabled_models_dict, dict) else {
+        self.enabled_models = enabled_models_dict if isinstance(enabled_models_dict, dict) and enabled_models_dict else {
             'random_forest': True,
             'gradient_boosting': False,
             'neural_network': False
@@ -183,6 +183,11 @@ class MLTrainer:
                 if self.symbol not in data or data[self.symbol].empty:
                     raise ValueError(f'No se pudieron obtener datos para {self.symbol} ni de SQLite ni descarga')
 
+                try:
+                    await downloader.process_and_save_data(data, self.timeframe, save_csv=True)
+                except Exception as save_error:
+                    logger.warning(f'⚠️ No se pudieron persistir los datos descargados en SQLite/CSV: {save_error}')
+
                 df = data[self.symbol]
                 logger.info(f'📥 Datos descargados: {len(df)} registros para {self.symbol}')
             
@@ -197,11 +202,12 @@ class MLTrainer:
             
             logger.info(f'✅ Datos descargados: {len(df)} velas desde {df.index.min()} hasta {df.index.max()}')
             
-            # VALIDAR que los datos cubren el período requerido (con tolerancia de 1 día)
-            min_date_required = pd.Timestamp(self.train_start).date()
-            min_date_available = df.index.min().date()
+            # VALIDAR que los datos cubren el período requerido (con tolerancia por cierre de mercado)
+            min_date_required = pd.Timestamp(self.train_start).normalize()
+            min_date_available = pd.Timestamp(df.index.min()).normalize()
+            start_tolerance = pd.Timedelta(days=3)
 
-            if min_date_available > min_date_required + pd.Timedelta(days=1):
+            if min_date_available > min_date_required + start_tolerance:
                 logger.error(f'❌ Datos descargados comienzan en {df.index.min()} pero necesitamos desde {self.train_start}')
                 raise ValueError(f'Datos insuficientes: comienzan en {df.index.min()}, necesario desde {self.train_start}')
             

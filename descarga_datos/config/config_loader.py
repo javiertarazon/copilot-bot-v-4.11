@@ -389,12 +389,13 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
         if "ml_training" in yaml_data:
             try:
                 ml_data = yaml_data["ml_training"]
+                default_ml_config = MLTrainingConfig()
                 config.ml_training = MLTrainingConfig(
-                    safe_mode=ml_data.get("safe_mode", False),
-                    enabled_models=ml_data.get("enabled_models", {}),
-                    training=ml_data.get("training", {}),
-                    optimization=ml_data.get("optimization", {}),
-                    models=ml_data.get("models", {}),
+                    safe_mode=ml_data.get("safe_mode", default_ml_config.safe_mode),
+                    enabled_models=ml_data.get("enabled_models") or default_ml_config.enabled_models,
+                    training=ml_data.get("training") or default_ml_config.training,
+                    optimization=ml_data.get("optimization") or default_ml_config.optimization,
+                    models=ml_data.get("models") or default_ml_config.models,
                 )
             except Exception as e:
                 print(f"[CONFIG] ⚠️  Error cargando sección ml_training (se ignora): {e}")
