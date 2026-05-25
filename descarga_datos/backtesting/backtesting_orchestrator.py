@@ -317,7 +317,6 @@ async def run_full_backtesting_with_batches():
 
                         if requires_state:
                             # Cargar datos completos desde CSV para estrategias stateful
-                            import pandas as pd
                             from pathlib import Path
                             csv_path = Path(__file__).parent.parent / "data" / "csv" / f"{symbol.replace('/', '_')}_{timeframe_used}.csv"
                             if csv_path.exists():

@@ -190,7 +190,7 @@ class DataStorage(BaseDataHandler):
                 df['timestamp'] = df['timestamp'].astype(np.int64)
                 # Validar rango temporal
                 if (df['timestamp'] < MIN_VALID_TS).any() or (df['timestamp'] > MAX_VALID_TS).any():
-                    raise ValueError(f"Timestamps fuera del rango válido: 1970-01-01 a 2050-01-01")
+                    raise ValueError(f"Timestamps fuera del rango válido: 1980-01-01 a 2050-01-01")
             
             # Preparar tipos de datos para SQLite
             for col in df.columns:
@@ -604,8 +604,8 @@ def save_data_method(self, data: pd.DataFrame, symbol: str, timeframe: str):
         # Generar nombre de tabla estándar - eliminar espacios y caracteres especiales
         table_name = f"{symbol.replace('/', '_').replace(':', '_').replace(' ', '_')}_{timeframe}"
         
-        # Usar save_data existente
-        return self.save_data(table_name, data)
+        # Guardar manteniendo histórico acumulado
+        return self.save_to_sqlite(data, table_name)
         
     except Exception as e:
         logger.error(f"Error en save_data: {e}")
