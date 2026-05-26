@@ -68,14 +68,15 @@ class SimpleTechnicalStrategy(BaseStrategy):
 
         if isinstance(config, dict):
             backtesting = config.get("backtesting", {})
+            symbol = (backtesting.get("symbols") or ["EURUSD"])[0]
             return {
-                "symbol": (backtesting.get("symbols") or ["EURUSD"])[0],
+                "symbol": symbol,
                 "timeframe": backtesting.get("timeframe", "4h"),
                 "initial_capital": backtesting.get("initial_capital", 10000.0),
                 "commission": backtesting.get("commission", 0.0),
                 "slippage": backtesting.get("slippage", 0.0),
                 **backtesting.get("base_parameters", {}),
-                **backtesting.get("optimized_parameters", {}).get("EURUSD", {}),
+                **backtesting.get("optimized_parameters", {}).get(symbol, {}),
             }
 
         if hasattr(config, "backtesting"):
@@ -100,8 +101,6 @@ class SimpleTechnicalStrategy(BaseStrategy):
     @staticmethod
     def _normalize_rate(raw_value: Optional[float]) -> float:
         value = float(raw_value or 0.0)
-        if value >= 1:
-            return value / 100.0
         if value > 0.01:
             return value / 100.0
         return value
