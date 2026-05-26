@@ -1201,6 +1201,7 @@ def main():
         try:
             report = build_validation_report(config=load_config())
             print(json.dumps(report, indent=2, ensure_ascii=False))
+            # Convención CLI: 0=ok/deshabilitado, 1=error interno, 2=gate de validación fallido.
             sys.exit(0 if report.get("status") in {"passed", "disabled"} else 2)
         except Exception as e:
             print(f"Error generando validation report ({type(e).__name__}): {e}")
