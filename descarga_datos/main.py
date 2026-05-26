@@ -1203,7 +1203,7 @@ def main():
             print(json.dumps(report, indent=2, ensure_ascii=False))
             sys.exit(0 if report.get("status") in {"passed", "disabled"} else 2)
         except Exception as e:
-            print(f"Error generando validation report: {e}")
+            print(f"Error generando validation report ({type(e).__name__}): {e}")
             sys.exit(1)
 
     # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita o sea modo data-audit)

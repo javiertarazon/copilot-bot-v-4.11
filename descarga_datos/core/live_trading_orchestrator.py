@@ -340,7 +340,15 @@ class LiveTradingOrchestrator:
         self.validation_report = validation_report
         if not is_ready:
             logger.error("Gate de validación falló. Ejecuta primero `python descarga_datos/main.py --validation-report`.")
-            logger.error(f"Detalle del gate: {validation_report.get('errors', [])}")
+            gate_errors = validation_report.get('errors', [])
+            failed_symbols = {
+                symbol: details.get('reasons', details.get('reason', 'sin detalle'))
+                for symbol, details in validation_report.get('symbols', {}).items()
+                if details.get('status') == 'failed'
+            }
+            logger.error(f"Errores globales del gate: {gate_errors}")
+            if failed_symbols:
+                logger.error(f"Símbolos bloqueados por el gate: {failed_symbols}")
             return False
         
         # Conectar con MT5

@@ -135,6 +135,8 @@ def evaluate_live_risk(
     balance = float(account_info.get("balance", baseline) or baseline or 0.0)
     equity = float(account_info.get("equity", balance) or balance or 0.0)
     reference_balance = baseline or balance or equity
+    result["checks"]["reference_balance"] = reference_balance
+    result["checks"]["reference_balance_resolved"] = reference_balance > 0
 
     def reject(reason: str, check_name: str, trigger_kill_switch: bool = False) -> Dict[str, Any]:
         result["approved"] = False
@@ -147,6 +149,9 @@ def evaluate_live_risk(
     manual_kill_switch = bool(controls.get("manual_kill_switch", False))
     if kill_switch_active or manual_kill_switch:
         return reject("Kill-switch activo", "kill_switch", True)
+
+    if reference_balance <= 0:
+        return reject("No se pudo resolver un balance base válido", "reference_balance")
 
     max_account_drawdown_pct = float(
         controls.get(

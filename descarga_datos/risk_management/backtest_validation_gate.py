@@ -77,6 +77,7 @@ def _evaluate_strategy(metrics: Dict[str, Optional[float]], thresholds: Validati
 
     total_trades = int(metrics.get("total_trades") or 0)
     win_rate_pct = metrics.get("win_rate_pct")
+    resolved_win_rate_pct = 0.0 if win_rate_pct is None else win_rate_pct
     profit_factor = metrics.get("profit_factor")
     max_drawdown_pct = metrics.get("max_drawdown_pct")
     total_pnl = float(metrics.get("total_pnl") or 0.0)
@@ -85,7 +86,7 @@ def _evaluate_strategy(metrics: Dict[str, Optional[float]], thresholds: Validati
         reasons.append(f"trades insuficientes ({total_trades} < {thresholds.min_total_trades})")
     if win_rate_pct is None or win_rate_pct < thresholds.min_win_rate * 100:
         reasons.append(
-            f"win rate insuficiente ({0.0 if win_rate_pct is None else win_rate_pct:.2f}% < {thresholds.min_win_rate * 100:.2f}%)"
+            f"win rate insuficiente ({resolved_win_rate_pct:.2f}% < {thresholds.min_win_rate * 100:.2f}%)"
         )
     if profit_factor is None or float(profit_factor) < thresholds.min_profit_factor:
         reasons.append(
