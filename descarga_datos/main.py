@@ -1172,7 +1172,7 @@ def main():
     parser.add_argument("--timeframe", type=str, help="Timeframe a usar (override config)")
     parser.add_argument("--data-audit", action="store_true", help="Ejecutar auditoría de calidad de datos y salir")
     parser.add_argument("--data-audit-skip-download", action="store_true", help="Ejecuta auditoría sin intentar descargas correctivas (no auto-fetch ni incremental edges)")
-    parser.add_argument("--validation-report", action="store_true", help="Generar reporte del gate de validación backtest/live y salir")
+    parser.add_argument("--validation-report", action="store_true", help="Generar reporte del gate backtest/live y salir (exit codes: 0 ok, 1 error, 2 validación fallida)")
     parser.add_argument("--optimize", action="store_true", help="Ejecutar pipeline completo de optimización ML (entrenamiento + optimización + backtest)")
     parser.add_argument("--train-ml", action="store_true", help="Solo entrenar modelos ML con configuración actual")
     parser.add_argument("--check-data-status", action="store_true", help="Verificar estado de datos disponibles sin descargar")

@@ -445,6 +445,7 @@ def apply_risk_management(signal: Dict[str, Any],
     # Calcular tamaño de posición usando lógica similar a MT5/Forex
     # En lugar de arriesgar % del capital total, usar lotes fijos conservadores
 
+    # Prioridad explícita: clave nueva `max_risk_per_trade`, fallback compatible `risk_percent`.
     risk_percent = config.get('max_risk_per_trade')
     if risk_percent is None:
         risk_percent = config.get('risk_percent', 1.0)

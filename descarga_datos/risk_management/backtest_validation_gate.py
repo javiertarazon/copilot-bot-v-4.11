@@ -84,17 +84,19 @@ def _evaluate_strategy(metrics: Dict[str, Optional[float]], thresholds: Validati
 
     if total_trades < thresholds.min_total_trades:
         reasons.append(f"trades insuficientes ({total_trades} < {thresholds.min_total_trades})")
+    resolved_profit_factor = 0.0 if profit_factor is None else float(profit_factor)
+    resolved_max_drawdown_pct = 0.0 if max_drawdown_pct is None else max_drawdown_pct
     if win_rate_pct is None or win_rate_pct < thresholds.min_win_rate * 100:
         reasons.append(
             f"win rate insuficiente ({resolved_win_rate_pct:.2f}% < {thresholds.min_win_rate * 100:.2f}%)"
         )
     if profit_factor is None or float(profit_factor) < thresholds.min_profit_factor:
         reasons.append(
-            f"profit factor insuficiente ({0.0 if profit_factor is None else float(profit_factor):.2f} < {thresholds.min_profit_factor:.2f})"
+            f"profit factor insuficiente ({resolved_profit_factor:.2f} < {thresholds.min_profit_factor:.2f})"
         )
     if max_drawdown_pct is None or max_drawdown_pct > thresholds.max_drawdown_pct:
         reasons.append(
-            f"drawdown excesivo ({0.0 if max_drawdown_pct is None else max_drawdown_pct:.2f}% > {thresholds.max_drawdown_pct:.2f}%)"
+            f"drawdown excesivo ({resolved_max_drawdown_pct:.2f}% > {thresholds.max_drawdown_pct:.2f}%)"
         )
     if total_pnl < thresholds.min_total_pnl:
         reasons.append(f"PnL insuficiente ({total_pnl:.2f} < {thresholds.min_total_pnl:.2f})")
@@ -170,7 +172,7 @@ def build_validation_report(
             overall_passed = False
             report["symbols"][symbol] = {
                 "status": "failed",
-                "reason": "archivo de resultados no encontrado",
+                "reasons": ["archivo de resultados no encontrado"],
             }
             continue
 
@@ -180,7 +182,7 @@ def build_validation_report(
             overall_passed = False
             report["symbols"][symbol] = {
                 "status": "failed",
-                "reason": f"archivo inválido: {exc}",
+                "reasons": [f"archivo inválido: {exc}"],
             }
             continue
 
@@ -208,7 +210,7 @@ def build_validation_report(
             overall_passed = False
             report["symbols"][symbol] = {
                 "status": "failed",
-                "reason": "sin estrategias evaluables",
+                "reasons": ["sin estrategias evaluables"],
             }
             continue
 

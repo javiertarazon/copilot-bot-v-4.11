@@ -341,11 +341,14 @@ class LiveTradingOrchestrator:
         if not is_ready:
             logger.error("Gate de validación falló. Ejecuta primero `python descarga_datos/main.py --validation-report`.")
             gate_errors = validation_report.get('errors', [])
-            failed_symbols = {
-                symbol: details.get('reasons', details.get('reason', 'sin detalle'))
-                for symbol, details in validation_report.get('symbols', {}).items()
-                if details.get('status') == 'failed'
-            }
+            failed_symbols = {}
+            for symbol, details in validation_report.get('symbols', {}).items():
+                if details.get('status') != 'failed':
+                    continue
+                reasons = details.get('reasons')
+                if not reasons:
+                    reasons = ['sin detalle']
+                failed_symbols[symbol] = reasons
             logger.error(f"Errores globales del gate: {gate_errors}")
             if failed_symbols:
                 logger.error(f"Símbolos bloqueados por el gate: {failed_symbols}")
@@ -556,6 +559,7 @@ class LiveTradingOrchestrator:
                     return
                 
                 # Convertir el formato de la estrategia al formato esperado
+                latest_bar = data.tail(1).to_dict('records')[0] if len(data) > 0 else {}
                 latest_signal = {
                     'action': result['signal'],
                     'price': result['signal_data'].get('entry_price', 0),
@@ -567,7 +571,7 @@ class LiveTradingOrchestrator:
                     'atr': result['signal_data'].get('atr', 0),
                     'risk_per_trade': result['signal_data'].get('risk_per_trade', 0.02),
                     'timestamp': result['signal_data'].get('timestamp'),
-                    'market_context': data.tail(1).to_dict('records')[0]
+                    'market_context': latest_bar
                 }
                 
                 logger.info(f"[SIGNAL]  {strategy_name} generó señal: {latest_signal.get('action', 'UNKNOWN')} para {symbol}")
@@ -589,7 +593,7 @@ class LiveTradingOrchestrator:
                     logger.info(f"[POSITION_SIZE] Añadido position_size={latest_signal['position_size']} a signal_data")
                 
                 # El resultado ya está en el formato correcto para la cola, pero necesita 'data'
-                result['data'] = data.tail(1).to_dict('records')[0]
+                result['data'] = latest_bar
                 self.signal_queue.put(result)
                 logger.info(f" Señal de {strategy_name} enviada a cola: {latest_signal['action']} {symbol}")
             else:
