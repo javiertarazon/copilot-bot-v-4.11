@@ -10,6 +10,8 @@ from .risk_management import (
     AlertType,
     RiskMetrics
 )
+from .backtest_validation_gate import build_validation_report, validate_backtest_readiness
+from .live_risk_guard import evaluate_live_risk
 
 __all__ = [
     'AdvancedRiskManager',
@@ -17,5 +19,8 @@ __all__ = [
     'Position',
     'CompensationPosition',
     'AlertType',
-    'RiskMetrics'
+    'RiskMetrics',
+    'build_validation_report',
+    'validate_backtest_readiness',
+    'evaluate_live_risk'
 ]

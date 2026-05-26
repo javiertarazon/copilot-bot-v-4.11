@@ -113,7 +113,8 @@ except AttributeError:
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from config.config_loader import load_config_from_yaml
+from config.config_loader import load_config, load_config_from_yaml
+from risk_management.backtest_validation_gate import build_validation_report
 from utils.logger import initialize_system_logging, setup_logging, get_logger
 from utils.logger_metrics import log_execution_time, log_system_status, log_batch_operation
 from utils.graceful_shutdown import GracefulShutdownHandler, SafeTrading
@@ -1171,6 +1172,7 @@ def main():
     parser.add_argument("--timeframe", type=str, help="Timeframe a usar (override config)")
     parser.add_argument("--data-audit", action="store_true", help="Ejecutar auditoría de calidad de datos y salir")
     parser.add_argument("--data-audit-skip-download", action="store_true", help="Ejecuta auditoría sin intentar descargas correctivas (no auto-fetch ni incremental edges)")
+    parser.add_argument("--validation-report", action="store_true", help="Generar reporte del gate de validación backtest/live y salir")
     parser.add_argument("--optimize", action="store_true", help="Ejecutar pipeline completo de optimización ML (entrenamiento + optimización + backtest)")
     parser.add_argument("--train-ml", action="store_true", help="Solo entrenar modelos ML con configuración actual")
     parser.add_argument("--check-data-status", action="store_true", help="Verificar estado de datos disponibles sin descargar")
@@ -1194,6 +1196,15 @@ def main():
         mode = "backtest"
 
     print(f" MODO SELECCIONADO: {mode.upper()}")
+
+    if args.validation_report:
+        try:
+            report = build_validation_report(config=load_config())
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            sys.exit(0 if report.get("status") in {"passed", "disabled"} else 2)
+        except Exception as e:
+            print(f"Error generando validation report: {e}")
+            sys.exit(1)
 
     # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita o sea modo data-audit)
     if not args.skip_validation and not args.data_audit:

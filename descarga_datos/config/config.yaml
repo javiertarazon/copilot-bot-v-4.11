@@ -106,6 +106,10 @@ live_trading:
   # Configuración de riesgo
   risk_per_trade: 0.02              # 2% riesgo por trade
   max_account_drawdown: 0.05        # 5% máximo drawdown de cuenta
+  max_position_size: 0.01           # 1% de exposición máxima por operación
+  max_risk_per_trade_usd: 50.0      # Riesgo máximo absoluto por operación
+  max_position_crypto: 0.001        # Tamaño máximo conservador
+  min_position_crypto: 0.0001       # Tamaño mínimo conservador
   
   # Configuración de sincronización
   position_sync_timeout: 5          # Timeout para sincronización de posiciones
@@ -124,6 +128,36 @@ live_trading:
   enable_auto_close_tp_sl: true     # Habilitar cierre automático en TP/SL
   enable_trailing_stop: true        # Habilitar trailing stop dinámico
   trailing_stop_pct: 0.65           # Trailing stop al 0.65%
+
+  validation:
+    enabled: true
+    require_results: true
+    min_total_trades: 30
+    min_win_rate: 0.45
+    min_profit_factor: 1.05
+    max_drawdown_pct: 15.0
+    min_total_pnl: 0.0
+
+  risk_controls:
+    kill_switch_enabled: true
+    manual_kill_switch: false
+    max_daily_loss_pct: 2.0
+    max_weekly_loss_pct: 4.0
+    max_account_drawdown_pct: 5.0
+    max_positions_per_correlation_group: 2
+    correlation_groups:
+      majors: [EURUSD, GBPUSD, AUDUSD, NZDUSD]
+      metals: [XAUUSD, XAGUSD]
+      yen: [USDJPY, EURJPY, GBPJPY]
+    spread_filter:
+      enabled: true
+      max_spread_points:
+        default: 35
+        EURUSD: 25
+        XAUUSD: 80
+    volatility_filter:
+      enabled: true
+      max_candle_range_pct: 1.5
 
 compensation_strategy:
   compensation_max_loss: 1.0

@@ -26,6 +26,8 @@ from config.config_loader import load_config
 from core.mt5_live_data import MT5LiveDataProvider
 from core.mt5_order_executor import MT5OrderExecutor, OrderType
 from utils.logger import setup_logger
+from risk_management.backtest_validation_gate import validate_backtest_readiness
+from risk_management.live_risk_guard import evaluate_live_risk
 from risk_management.risk_management import apply_risk_management
 from utils.position_synchronizer import PositionSynchronizer
 
@@ -84,6 +86,9 @@ class LiveTradingOrchestrator:
         self.strategy_classes = {}
         self.strategy_instances = {}
         self.strategy_live_configs = {}  # Configuraciones específicas de live trading por estrategia
+        self.kill_switch_active = False
+        self.validation_report = {}
+        self.risk_baseline_balance = 0.0
         
         # FASE 5: Inicializar IndexedPositionMonitor (v4.11)
         self.indexed_monitor = None
@@ -108,7 +113,8 @@ class LiveTradingOrchestrator:
             'win_rate': 0.0,
             'profit_factor': 0.0,
             'start_time': datetime.now(),
-            'runtime_minutes': 0
+            'runtime_minutes': 0,
+            'kill_switch_active': False
         }
         
         logger.info("LiveTradingOrchestrator inicializado correctamente")
@@ -328,6 +334,14 @@ class LiveTradingOrchestrator:
         if not self._validate_live_config():
             logger.error("Configuración de live trading inválida. Abortando inicio.")
             return False
+
+        # Gate obligatorio de validación backtest/live
+        is_ready, validation_report = validate_backtest_readiness(self.config)
+        self.validation_report = validation_report
+        if not is_ready:
+            logger.error("Gate de validación falló. Ejecuta primero `python descarga_datos/main.py --validation-report`.")
+            logger.error(f"Detalle del gate: {validation_report.get('errors', [])}")
+            return False
         
         # Conectar con MT5
         if not self.data_provider.connect():
@@ -338,6 +352,11 @@ class LiveTradingOrchestrator:
             logger.error("No se pudo establecer conexión para ejecutar órdenes")
             self.data_provider.disconnect()
             return False
+
+        account_info = self.data_provider.get_account_info()
+        self.risk_baseline_balance = float(
+            account_info.get('balance', account_info.get('equity', 0.0)) or 0.0
+        )
         
         # Iniciar hilos
         self.running = True
@@ -539,7 +558,8 @@ class LiveTradingOrchestrator:
                     'ml_confidence': result.get('ml_confidence', 0.5),
                     'atr': result['signal_data'].get('atr', 0),
                     'risk_per_trade': result['signal_data'].get('risk_per_trade', 0.02),
-                    'timestamp': result['signal_data'].get('timestamp')
+                    'timestamp': result['signal_data'].get('timestamp'),
+                    'market_context': data.tail(1).to_dict('records')[0]
                 }
                 
                 logger.info(f"[SIGNAL]  {strategy_name} generó señal: {latest_signal.get('action', 'UNKNOWN')} para {symbol}")
@@ -596,7 +616,12 @@ class LiveTradingOrchestrator:
             # Configuración de riesgo
             risk_config = {
                 'risk_percent': self.live_config.get('risk_per_trade', 0.01) * 100,
-                'max_drawdown_limit': 20.0
+                'max_risk_per_trade': self.live_config.get('risk_per_trade', 0.01) * 100,
+                'max_drawdown_limit': float(self.live_config.get('max_account_drawdown', 0.05) or 0.05) * 100,
+                'max_position_size': self.live_config.get('max_position_size', 0.01),
+                'max_risk_per_trade_usd': self.live_config.get('max_risk_per_trade_usd', 50.0),
+                'max_position_crypto': self.live_config.get('max_position_crypto', 0.001),
+                'min_position_crypto': self.live_config.get('min_position_crypto', 0.0001),
             }
             
             # Información del símbolo (básica por ahora)
@@ -608,8 +633,26 @@ class LiveTradingOrchestrator:
             
             # Aplicar gestión de riesgo
             risk_result = apply_risk_management(signal, account_balance, symbol_info, risk_config)
-            
-            return not risk_result.get('rejected', False)
+            if risk_result.get('rejected', False):
+                return False
+
+            live_risk_result = evaluate_live_risk(
+                signal=risk_result,
+                active_positions=self.active_positions,
+                position_history=self.position_history,
+                account_info=account_info,
+                live_config=self.live_config,
+                market_state=self.data_provider.get_market_status(symbol),
+                baseline_balance=self.risk_baseline_balance,
+                kill_switch_active=self.kill_switch_active,
+            )
+            signal['live_risk_guard'] = live_risk_result
+
+            if live_risk_result.get('kill_switch_triggered', False):
+                self.kill_switch_active = True
+                self.live_metrics['kill_switch_active'] = True
+
+            return not live_risk_result.get('rejected', False)
             
         except Exception as e:
             logger.error(f"Error aplicando gestión de riesgo: {str(e)}")

@@ -445,7 +445,9 @@ def apply_risk_management(signal: Dict[str, Any],
     # Calcular tamaño de posición usando lógica similar a MT5/Forex
     # En lugar de arriesgar % del capital total, usar lotes fijos conservadores
 
-    risk_percent = config.get('max_risk_per_trade', 1.0)  # Obtener de config
+    risk_percent = config.get('max_risk_per_trade')
+    if risk_percent is None:
+        risk_percent = config.get('risk_percent', 1.0)
 
     # Para cripto/forex: usar lógica de lotes como en MT5
     # Un lote estándar = 100,000 unidades, pero usaremos micro-lotes conservadores
@@ -486,7 +488,8 @@ def apply_risk_management(signal: Dict[str, Any],
     min_position = config.get('min_position_crypto', 0.0001)  # Mínimo 0.0001 BTC
     position_size = max(position_size, min_position)
 
-    logger.info(f"🎯 Tamaño posición MT5-style: {position_size:.6f} (riesgo: ${risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")    # Verificar límites de exposición - MT5 style (muy conservador)
+    logger.info(f"🎯 Tamaño posición MT5-style: {position_size:.6f} (riesgo: ${risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")
+    # Verificar límites de exposición - MT5 style (muy conservador)
     max_position_size = config.get('max_position_size', 0.01)  # Solo 1% del balance máximo
     max_position_value = account_balance * max_position_size
     position_value = position_size * entry_price
