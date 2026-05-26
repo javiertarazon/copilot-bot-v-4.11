@@ -58,6 +58,11 @@ class AdvancedDataDownloader:
         # Exchange activo preferido (prioridad en fallback)
         self.active_exchange = getattr(config, 'active_exchange', None)
 
+    def _mt5_only_mode_enabled(self) -> bool:
+        mt5_enabled = bool(getattr(getattr(self.config, 'mt5', None), 'enabled', False))
+        use_ccxt_for_crypto = bool(getattr(getattr(self.config, 'data', None), 'use_ccxt_for_crypto', True))
+        return mt5_enabled and not use_ccxt_for_crypto
+
     async def _async_ccxt_call(self, exchange, method_name: str, *args, **kwargs):
         """Ejecuta llamadas síncronas de CCXT en un thread pool para compatibilidad async"""
         loop = asyncio.get_event_loop()
@@ -511,10 +516,12 @@ class AdvancedDataDownloader:
         
         # Detectar fuente primaria
         is_crypto = self._is_crypto_symbol(symbol)
-        primary_source = 'ccxt' if is_crypto else 'mt5'
-        fallback_sources = ['okx', 'kraken', 'kucoin'] if primary_source == 'ccxt' else ['mt5']
+        mt5_only_mode = self._mt5_only_mode_enabled()
+        primary_source = 'mt5' if mt5_only_mode else ('ccxt' if is_crypto else 'mt5')
+        fallback_sources = [] if mt5_only_mode else (['okx', 'kraken', 'kucoin'] if primary_source == 'ccxt' else ['mt5'])
 
-        self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallbacks={fallback_sources}")        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
+        self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallbacks={fallback_sources}")
+        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
         for attempt in range(self.max_retries):
             try:
                 if primary_source == 'ccxt':
@@ -551,29 +558,41 @@ class AdvancedDataDownloader:
                     self.logger.warning(f"⚠️ {symbol}: Todos los intentos en {primary_source} fallaron")
         
         # ========== FALLBACK AUTOMÁTICO ==========
-        self.logger.info(f"🔄 {symbol}: Intentando fallback a {fallback_source}")
-        
-        try:
-            if fallback_source == 'ccxt':
-                # Convertir símbolo de MT5 a CCXT si es necesario
-                ccxt_symbol = self._convert_to_ccxt_format(symbol)
-                self.logger.info(f"🔄 Convertido para CCXT: {symbol} → {ccxt_symbol}")
-                df = await self._download_crypto_symbol(ccxt_symbol, timeframe, start_date, end_date)
-            else:
-                # Convertir símbolo de CCXT a MT5 si es necesario  
-                mt5_symbol = self._convert_to_mt5_format(symbol)
-                self.logger.info(f"🔄 Convertido para MT5: {symbol} → {mt5_symbol}")
-                df = self._download_stock_symbol(mt5_symbol, timeframe, start_date, end_date)
-            
-            if df is not None and len(df) > 0:
-                self.logger.info(f"✅ {symbol}: Fallback exitoso desde {fallback_source} ({len(df)} velas)")
-                return df
-            else:
-                self.logger.warning(f"⚠️ {symbol}: Fallback retornó vacío")
-        
-        except Exception as e:
-            self.logger.error(f"❌ {symbol}: Fallback falló: {e}")
-        
+        for fallback_source in fallback_sources:
+            self.logger.info(f"🔄 {symbol}: Intentando fallback a {fallback_source}")
+
+            try:
+                if fallback_source == 'ccxt':
+                    ccxt_symbol = self._convert_to_ccxt_format(symbol)
+                    self.logger.info(f"🔄 Convertido para CCXT: {symbol} → {ccxt_symbol}")
+                    df = await self._download_crypto_symbol(ccxt_symbol, timeframe, start_date, end_date)
+                elif fallback_source == 'mt5':
+                    mt5_symbol = self._convert_to_mt5_format(symbol)
+                    self.logger.info(f"🔄 Convertido para MT5: {symbol} → {mt5_symbol}")
+                    df = self._download_stock_symbol(mt5_symbol, timeframe, start_date, end_date)
+                else:
+                    ccxt_symbol = self._convert_to_ccxt_format(symbol)
+                    df = await self._fetch_crypto_paginated(
+                        self.ccxt_exchanges[fallback_source],
+                        fallback_source,
+                        ccxt_symbol,
+                        timeframe,
+                        start_date,
+                        end_date,
+                    )
+
+                if df is not None and len(df) > 0:
+                    self.logger.info(f"✅ {symbol}: Fallback exitoso desde {fallback_source} ({len(df)} velas)")
+                    return df
+
+                self.logger.warning(f"⚠️ {symbol}: Fallback {fallback_source} retornó vacío")
+            except Exception as e:
+                self.logger.error(f"❌ {symbol}: Fallback {fallback_source} falló: {e}")
+
+        if mt5_only_mode:
+            self.logger.error(f"❌ {symbol}: MT5-only activo y no se pudo descargar desde MT5")
+            return None
+
         # ========== ÚLTIMO FALLBACK: YAHOO FINANCE ==========
         self.logger.info(f"📈 {symbol}: Intentando último fallback con Yahoo Finance")
         

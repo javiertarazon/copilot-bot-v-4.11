@@ -27,8 +27,10 @@ try:
         warmup_numba_cache
     )
     NUMBA_AVAILABLE = True
-except ImportError:
+except Exception as e:
     NUMBA_AVAILABLE = False
+    logger = get_logger(__name__)
+    logger.warning(f"Numba indicators no disponibles, usando fallbacks pandas: {e}")
 
 # Intentar importar talib wrapper
 logger = get_logger(__name__)

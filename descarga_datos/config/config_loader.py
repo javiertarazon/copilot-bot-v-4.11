@@ -585,6 +585,7 @@ def validate_config_strategies(config: Config) -> bool:
         STRATEGY_CLASSES = {
             'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
             'HeikinNeuronalMLPruebas': ('strategies.heikin_neuronal_ml_pruebas', 'HeikinNeuronalMLPruebasStrategy'),
+            'SimpleTechnical': ('strategies.simple_technical_strategy', 'SimpleTechnicalStrategy'),
         }
 
     for strategy_name in enabled_strategies:

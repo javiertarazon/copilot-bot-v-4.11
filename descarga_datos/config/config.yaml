@@ -69,12 +69,16 @@ backtesting:
   
   strategies:
     HeikinNeuronalMLPruebas: false
+    SimpleTechnical: true
     UltraDetailedHeikinAshiML: true
   
   strategy_paths:
     HeikinNeuronalMLPruebas:
     - strategies.heikin_neuronal_ml_pruebas
     - HeikinNeuronalMLPruebasStrategy
+    SimpleTechnical:
+    - strategies.simple_technical_strategy
+    - SimpleTechnicalStrategy
     UltraDetailedHeikinAshiML:
     - strategies.ultra_detailed_heikin_ashi_ml_strategy
     - UltraDetailedHeikinAshiMLStrategy
