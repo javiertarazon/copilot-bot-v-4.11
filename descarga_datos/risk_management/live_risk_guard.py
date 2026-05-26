@@ -106,6 +106,31 @@ def _calculate_candle_range_pct(market_context: Dict[str, Any], fallback_price: 
     return abs(high_value - low_value) / close_value * 100
 
 
+def _check_loss_limit(
+    result: Dict[str, Any],
+    period_name: str,
+    pnl_value: float,
+    reference_balance: float,
+    max_loss_pct: float,
+) -> Optional[Dict[str, Any]]:
+    if reference_balance <= 0 or max_loss_pct <= 0:
+        return None
+
+    max_loss_value = reference_balance * max_loss_pct / 100
+    result["checks"][f"max_{period_name}_loss"] = max_loss_value
+    if pnl_value <= -max_loss_value:
+        result["approved"] = False
+        result["rejected"] = True
+        result["rejection_reason"] = (
+            f"Límite {period_name} excedido ({pnl_value:.2f} <= {-max_loss_value:.2f})"
+        )
+        result["failed_check"] = f"max_{period_name}_loss_pct"
+        result["kill_switch_triggered"] = True
+        return result
+
+    return None
+
+
 def evaluate_live_risk(
     signal: Dict[str, Any],
     active_positions: Dict[str, Any],
@@ -178,25 +203,13 @@ def evaluate_live_risk(
 
     max_daily_loss_pct = float(controls.get("max_daily_loss_pct", 0.0) or 0.0)
     max_weekly_loss_pct = float(controls.get("max_weekly_loss_pct", 0.0) or 0.0)
-    if reference_balance > 0 and max_daily_loss_pct > 0:
-        max_daily_loss = reference_balance * max_daily_loss_pct / 100
-        result["checks"]["max_daily_loss"] = max_daily_loss
-        if daily_pnl <= -max_daily_loss:
-            return reject(
-                f"Límite diario excedido ({daily_pnl:.2f} <= {-max_daily_loss:.2f})",
-                "max_daily_loss_pct",
-                True,
-            )
+    daily_limit_check = _check_loss_limit(result, "daily", daily_pnl, reference_balance, max_daily_loss_pct)
+    if daily_limit_check is not None:
+        return daily_limit_check
 
-    if reference_balance > 0 and max_weekly_loss_pct > 0:
-        max_weekly_loss = reference_balance * max_weekly_loss_pct / 100
-        result["checks"]["max_weekly_loss"] = max_weekly_loss
-        if weekly_pnl <= -max_weekly_loss:
-            return reject(
-                f"Límite semanal excedido ({weekly_pnl:.2f} <= {-max_weekly_loss:.2f})",
-                "max_weekly_loss_pct",
-                True,
-            )
+    weekly_limit_check = _check_loss_limit(result, "weekly", weekly_pnl, reference_balance, max_weekly_loss_pct)
+    if weekly_limit_check is not None:
+        return weekly_limit_check
 
     correlation_groups = controls.get("correlation_groups", {}) or {}
     correlated_positions = _count_correlated_positions(symbol, active_positions, correlation_groups)

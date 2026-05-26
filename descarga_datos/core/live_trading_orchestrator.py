@@ -335,7 +335,7 @@ class LiveTradingOrchestrator:
             logger.error("Configuración de live trading inválida. Abortando inicio.")
             return False
 
-        # Gate obligatorio de validación backtest/live
+        # gate obligatorio de validación backtest/live
         is_ready, validation_report = validate_backtest_readiness(self.config)
         self.validation_report = validation_report
         if not is_ready:
